@@ -6,9 +6,9 @@ import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.Typeface
 import android.view.SurfaceHolder
+import androidx.wear.watchface.CanvasType
 import androidx.wear.watchface.ComplicationSlotsManager
 import androidx.wear.watchface.DrawMode
-import androidx.wear.watchface.RenderParameters
 import androidx.wear.watchface.Renderer
 import androidx.wear.watchface.WatchFace
 import androidx.wear.watchface.WatchFaceService
@@ -40,16 +40,21 @@ class WordWatchFaceService : WatchFaceService() {
         return WatchFace(WatchFaceType.DIGITAL, renderer)
     }
 
+    // Пустой контейнер ресурсов, так как циферблат рисует только текст
+    private class NoSharedAssets : Renderer.SharedAssets {
+        override fun onDestroy() {}
+    }
+
     private inner class WordCanvasRenderer(
         surfaceHolder: SurfaceHolder,
         currentUserStyleRepository: CurrentUserStyleRepository,
         watchState: WatchState,
         interactiveDrawModeUpdateDelayMillis: Long
-    ) : Renderer.CanvasRenderer2<Renderer.SharedAssets.NONE>(
+    ) : Renderer.CanvasRenderer2<NoSharedAssets>(
         surfaceHolder,
         currentUserStyleRepository,
         watchState,
-        Renderer.CanvasType.HARDWARE,
+        CanvasType.HARDWARE,
         interactiveDrawModeUpdateDelayMillis,
         clearWithBackgroundTintBeforeRenderingHighlightLayer = true
     ) {
@@ -63,15 +68,15 @@ class WordWatchFaceService : WatchFaceService() {
             textAlign = Paint.Align.LEFT
         }
 
-        override suspend fun initSharedAssets(): Renderer.SharedAssets.NONE {
-            return Renderer.SharedAssets.NONE
+        override suspend fun createSharedAssets(): NoSharedAssets {
+            return NoSharedAssets()
         }
 
         override fun render(
             canvas: Canvas,
             bounds: Rect,
             zonedDateTime: ZonedDateTime,
-            sharedAssets: Renderer.SharedAssets.NONE
+            sharedAssets: NoSharedAssets
         ) {
             val isAmbient = renderParameters.drawMode == DrawMode.AMBIENT
 
@@ -105,7 +110,7 @@ class WordWatchFaceService : WatchFaceService() {
             canvas: Canvas,
             bounds: Rect,
             zonedDateTime: ZonedDateTime,
-            sharedAssets: Renderer.SharedAssets.NONE
+            sharedAssets: NoSharedAssets
         ) {
             // Без подсветки слотов усложнений
         }
