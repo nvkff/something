@@ -8,12 +8,13 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.example.wordclock"
-        minSdk = 30
-        targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        applicationId "com.example.wordclock"
+        minSdk 30
+        targetSdk 34   // <--- МЕНЯЕМ 34 НА 33
+        versionCode 1
+        versionName "1.0"
     }
+
 
     buildTypes {
         release {
