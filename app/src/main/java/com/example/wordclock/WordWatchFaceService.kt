@@ -57,11 +57,11 @@ class WordWatchFaceService : WatchFaceService() {
         interactiveDrawModeUpdateDelayMillis,
         clearWithBackgroundTintBeforeRenderingHighlightLayer = true
     ) {
-        // Загрузка пиксельного шрифта из папки assets (с fallback на Monospace при отсутствии)
+        // Чтение шрифта из папки assets (если файла нет — используется Monospace)
         private val pixelFont: Typeface by lazy {
             try {
                 Typeface.createFromAsset(this@WordWatchFaceService.assets, "minecraft.ttf")
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 Typeface.MONOSPACE
             }
         }
@@ -88,36 +88,35 @@ class WordWatchFaceService : WatchFaceService() {
         ) {
             val isAmbient = renderParameters.drawMode == DrawMode.AMBIENT
 
-            // Всегда глубокий черный фон (экономит батарею OLED и не слепит)
+            // Всегда глубокий черный фон
             canvas.drawColor(Color.BLACK)
 
-            // Для аутентичного пиксель-арта отключаем сглаживание
             paintRegular.typeface = pixelFont
             paintBold.typeface = pixelFont
             paintRegular.isAntiAlias = false
             paintBold.isAntiAlias = false
 
             if (isAmbient) {
-                // В режиме AOD (Always-On): полый контурный шрифт с белой рамкой
+                // Режим AOD (Always-On): полый контур с белой рамкой
                 paintRegular.style = Paint.Style.STROKE
-                paintRegular.strokeWidth = bounds.width() * 0.005f // тонкая рамка ~2-3px
+                paintRegular.strokeWidth = bounds.width() * 0.006f
 
                 paintBold.style = Paint.Style.STROKE
-                paintBold.strokeWidth = bounds.width() * 0.012f // более жирная рамка для часа
+                paintBold.strokeWidth = bounds.width() * 0.012f
             } else {
-                // В активном режиме: сплошная белая заливка
+                // Активный режим: сплошная белая заливка
                 paintRegular.style = Paint.Style.FILL
                 paintBold.style = Paint.Style.FILL
             }
 
             val lines = getRussianTime(zonedDateTime.hour, zonedDateTime.minute)
-            val fontSize = bounds.width() * 0.09f
+            val fontSize = bounds.width() * 0.088f
             val lineSpacing = fontSize * 1.35f
 
             paintRegular.textSize = fontSize
             paintBold.textSize = fontSize
 
-            val startX = bounds.left + bounds.width() * 0.18f
+            val startX = bounds.left + bounds.width() * 0.20f
             var startY = bounds.centerY() - (lines.size * lineSpacing / 2f) + fontSize
 
             for (i in lines.indices) {
