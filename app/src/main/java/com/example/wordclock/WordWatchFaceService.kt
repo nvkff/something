@@ -40,7 +40,6 @@ class WordWatchFaceService : WatchFaceService() {
         return WatchFace(WatchFaceType.DIGITAL, renderer)
     }
 
-    // Пустой контейнер ресурсов, так как циферблат рисует только текст
     private class NoSharedAssets : Renderer.SharedAssets {
         override fun onDestroy() {}
     }
@@ -58,13 +57,22 @@ class WordWatchFaceService : WatchFaceService() {
         interactiveDrawModeUpdateDelayMillis,
         clearWithBackgroundTintBeforeRenderingHighlightLayer = true
     ) {
+        // Загрузка пиксельного шрифта из папки assets (с fallback на Monospace при отсутствии)
+        private val pixelFont: Typeface by lazy {
+            try {
+                Typeface.createFromAsset(this@WordWatchFaceService.assets, "minecraft.ttf")
+            } catch (e: Exception) {
+                Typeface.MONOSPACE
+            }
+        }
+
         private val paintRegular = Paint().apply {
-            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
+            color = Color.WHITE
             textAlign = Paint.Align.LEFT
         }
 
         private val paintBold = Paint().apply {
-            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+            color = Color.WHITE
             textAlign = Paint.Align.LEFT
         }
 
@@ -80,23 +88,36 @@ class WordWatchFaceService : WatchFaceService() {
         ) {
             val isAmbient = renderParameters.drawMode == DrawMode.AMBIENT
 
-            // Светлый E-Ink фон при активном экране, энергоэффективный черный в AOD
-            canvas.drawColor(if (isAmbient) Color.BLACK else Color.WHITE)
+            // Всегда глубокий черный фон (экономит батарею OLED и не слепит)
+            canvas.drawColor(Color.BLACK)
 
-            val textColor = if (isAmbient) Color.WHITE else Color.BLACK
-            paintRegular.color = textColor
-            paintBold.color = textColor
-            paintRegular.isAntiAlias = !isAmbient
-            paintBold.isAntiAlias = !isAmbient
+            // Для аутентичного пиксель-арта отключаем сглаживание
+            paintRegular.typeface = pixelFont
+            paintBold.typeface = pixelFont
+            paintRegular.isAntiAlias = false
+            paintBold.isAntiAlias = false
+
+            if (isAmbient) {
+                // В режиме AOD (Always-On): полый контурный шрифт с белой рамкой
+                paintRegular.style = Paint.Style.STROKE
+                paintRegular.strokeWidth = bounds.width() * 0.005f // тонкая рамка ~2-3px
+
+                paintBold.style = Paint.Style.STROKE
+                paintBold.strokeWidth = bounds.width() * 0.012f // более жирная рамка для часа
+            } else {
+                // В активном режиме: сплошная белая заливка
+                paintRegular.style = Paint.Style.FILL
+                paintBold.style = Paint.Style.FILL
+            }
 
             val lines = getRussianTime(zonedDateTime.hour, zonedDateTime.minute)
-            val fontSize = bounds.width() * 0.085f
-            val lineSpacing = fontSize * 1.25f
+            val fontSize = bounds.width() * 0.09f
+            val lineSpacing = fontSize * 1.35f
 
             paintRegular.textSize = fontSize
             paintBold.textSize = fontSize
 
-            val startX = bounds.left + bounds.width() * 0.22f
+            val startX = bounds.left + bounds.width() * 0.18f
             var startY = bounds.centerY() - (lines.size * lineSpacing / 2f) + fontSize
 
             for (i in lines.indices) {
@@ -111,9 +132,7 @@ class WordWatchFaceService : WatchFaceService() {
             bounds: Rect,
             zonedDateTime: ZonedDateTime,
             sharedAssets: NoSharedAssets
-        ) {
-            // Без подсветки слотов усложнений
-        }
+        ) {}
 
         private fun getRussianTime(hour: Int, min: Int): List<String> {
             val h12 = (if (min > 30) hour + 1 else hour) % 12
