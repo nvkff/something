@@ -6,8 +6,9 @@ import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.Typeface
 import android.view.SurfaceHolder
-import androidx.wear.watchface.CanvasRenderer
+import androidx.wear.watchface.ComplicationSlotsManager
 import androidx.wear.watchface.DrawMode
+import androidx.wear.watchface.RenderParameters
 import androidx.wear.watchface.Renderer
 import androidx.wear.watchface.WatchFace
 import androidx.wear.watchface.WatchFaceService
@@ -18,16 +19,23 @@ import java.time.ZonedDateTime
 
 class WordWatchFaceService : WatchFaceService() {
 
+    override fun createComplicationSlotsManager(
+        currentUserStyleRepository: CurrentUserStyleRepository
+    ): ComplicationSlotsManager {
+        return ComplicationSlotsManager(emptyList(), currentUserStyleRepository)
+    }
+
     override suspend fun createWatchFace(
         surfaceHolder: SurfaceHolder,
         watchState: WatchState,
+        complicationSlotsManager: ComplicationSlotsManager,
         currentUserStyleRepository: CurrentUserStyleRepository
     ): WatchFace {
         val renderer = WordCanvasRenderer(
             surfaceHolder,
             currentUserStyleRepository,
             watchState,
-            CanvasType.HARDWARE
+            16L
         )
         return WatchFace(WatchFaceType.DIGITAL, renderer)
     }
@@ -36,13 +44,13 @@ class WordWatchFaceService : WatchFaceService() {
         surfaceHolder: SurfaceHolder,
         currentUserStyleRepository: CurrentUserStyleRepository,
         watchState: WatchState,
-        canvasType: Int
-    ) : CanvasRenderer(
+        interactiveDrawModeUpdateDelayMillis: Long
+    ) : Renderer.CanvasRenderer2<Renderer.SharedAssets.NONE>(
         surfaceHolder,
         currentUserStyleRepository,
         watchState,
-        canvasType,
-        16L,
+        Renderer.CanvasType.HARDWARE,
+        interactiveDrawModeUpdateDelayMillis,
         clearWithBackgroundTintBeforeRenderingHighlightLayer = true
     ) {
         private val paintRegular = Paint().apply {
@@ -55,10 +63,19 @@ class WordWatchFaceService : WatchFaceService() {
             textAlign = Paint.Align.LEFT
         }
 
-        override fun render(canvas: Canvas, bounds: Rect, zonedDateTime: ZonedDateTime) {
+        override suspend fun initSharedAssets(): Renderer.SharedAssets.NONE {
+            return Renderer.SharedAssets.NONE
+        }
+
+        override fun render(
+            canvas: Canvas,
+            bounds: Rect,
+            zonedDateTime: ZonedDateTime,
+            sharedAssets: Renderer.SharedAssets.NONE
+        ) {
             val isAmbient = renderParameters.drawMode == DrawMode.AMBIENT
 
-            // Светлый E-Ink фон при включенном экране, черный в AOD
+            // Светлый E-Ink фон при активном экране, энергоэффективный черный в AOD
             canvas.drawColor(if (isAmbient) Color.BLACK else Color.WHITE)
 
             val textColor = if (isAmbient) Color.WHITE else Color.BLACK
@@ -78,14 +95,20 @@ class WordWatchFaceService : WatchFaceService() {
             var startY = bounds.centerY() - (lines.size * lineSpacing / 2f) + fontSize
 
             for (i in lines.indices) {
-                // Последняя строка (сам час) выделяется жирным, как на фото
                 val p = if (i == lines.lastIndex) paintBold else paintRegular
                 canvas.drawText(lines[i], startX, startY, p)
                 startY += lineSpacing
             }
         }
 
-        override fun renderHighlightLayer(canvas: Canvas, bounds: Rect, zonedDateTime: ZonedDateTime) {}
+        override fun renderHighlightLayer(
+            canvas: Canvas,
+            bounds: Rect,
+            zonedDateTime: ZonedDateTime,
+            sharedAssets: Renderer.SharedAssets.NONE
+        ) {
+            // Без подсветки слотов усложнений
+        }
 
         private fun getRussianTime(hour: Int, min: Int): List<String> {
             val h12 = (if (min > 30) hour + 1 else hour) % 12
