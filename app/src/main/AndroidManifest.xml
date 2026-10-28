@@ -22,6 +22,7 @@
             android:name=".WordWatchFaceService"
             android:directBootAware="true"
             android:exported="true"
+            android:icon="@drawable/preview"
             android:label="Словами"
             android:permission="android.permission.BIND_WALLPAPER">
             <intent-filter>
@@ -34,10 +35,10 @@
                 android:resource="@xml/watch_face" />
             <meta-data
                 android:name="com.google.android.wearable.watchface.preview"
-                android:resource="@android:drawable/ic_menu_recent_history" />
+                android:resource="@drawable/preview" />
             <meta-data
                 android:name="com.google.android.wearable.watchface.preview_circular"
-                android:resource="@android:drawable/ic_menu_recent_history" />
+                android:resource="@drawable/preview" />
         </service>
     </application>
 </manifest>
