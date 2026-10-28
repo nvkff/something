@@ -8,20 +8,35 @@
         android:icon="@android:drawable/ic_menu_recent_history"
         android:label="Русские часы">
 
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
         <service
             android:name=".WordWatchFaceService"
+            android:directBootAware="true"
             android:exported="true"
             android:label="Словами"
             android:permission="android.permission.BIND_WALLPAPER">
             <intent-filter>
                 <action android:name="android.service.wallpaper.WallpaperService" />
                 <category android:name="com.google.android.wearable.watchface.category.WATCH_FACE" />
+                <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
             <meta-data
                 android:name="android.service.wallpaper"
                 android:resource="@xml/watch_face" />
             <meta-data
                 android:name="com.google.android.wearable.watchface.preview"
+                android:resource="@android:drawable/ic_menu_recent_history" />
+            <meta-data
+                android:name="com.google.android.wearable.watchface.preview_circular"
                 android:resource="@android:drawable/ic_menu_recent_history" />
         </service>
     </application>
