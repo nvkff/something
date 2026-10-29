@@ -14,34 +14,145 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Generate All Watch Face Format Resources
+      - name: Generate Jetpack WatchFace Project Structure
         run: |
-          # 1. Создаем корневой build.gradle.kts
+          # 1. Корневой build.gradle.kts
           cat << 'EOF' > build.gradle.kts
           plugins {
               id("com.android.application") version "8.4.1" apply false
+              id("org.jetbrains.kotlin.android") version "1.9.23" apply false
           }
           EOF
 
-          mkdir -p app/src/main/res/font app/src/main/res/drawable app/src/main/res/raw
+          # 2. settings.gradle.kts
+          cat << 'EOF' > settings.gradle.kts
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "WordClock"
+          include(":app")
+          EOF
 
-          # 2. Достаем minecraft.ttf из истории коммитов репозитория
+          # 3. app/build.gradle.kts
+          mkdir -p app
+          cat << 'EOF' > app/build.gradle.kts
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+
+          android {
+              namespace = "com.example.wordclock"
+              compileSdk = 34
+
+              defaultConfig {
+                  applicationId = "com.example.wordclock"
+                  minSdk = 28
+                  targetSdk = 30
+                  versionCode = 1
+                  versionName = "1.0"
+              }
+
+              buildTypes {
+                  release {
+                      isMinifyEnabled = false
+                  }
+              }
+
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+
+              kotlinOptions {
+                  jvmTarget = "17"
+              }
+          }
+
+          dependencies {
+              implementation("androidx.wear.watchface:watchface:1.1.1")
+              implementation("androidx.wear.watchface:watchface-editor:1.1.1")
+              implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+          }
+          EOF
+
+          # 4. AndroidManifest.xml
+          mkdir -p app/src/main/res/xml app/src/main/res/drawable app/src/main/assets app/src/main/java/com/example/wordclock
+          cat << 'EOF' > app/src/main/AndroidManifest.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-feature android:name="android.hardware.type.watch" />
+              <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+              <application
+                  android:allowBackup="true"
+                  android:icon="@drawable/preview"
+                  android:label="Русские часы"
+                  android:hasCode="true">
+
+                  <service
+                      android:name=".WordWatchFaceService"
+                      android:exported="true"
+                      android:label="Русские часы"
+                      android:permission="android.permission.BIND_WALLPAPER">
+
+                      <intent-filter>
+                          <action android:name="android.service.wallpaper.WallpaperService" />
+                          <category android:name="com.google.android.wearable.watchface.category.WATCH_FACE" />
+                      </intent-filter>
+
+                      <meta-data
+                          android:name="android.service.wallpaper"
+                          android:resource="@xml/watch_face" />
+
+                      <meta-data
+                          android:name="com.google.android.wearable.watchface.preview"
+                          android:resource="@drawable/preview" />
+
+                      <meta-data
+                          android:name="com.google.android.wearable.watchface.preview_circular"
+                          android:resource="@drawable/preview" />
+
+                      <meta-data
+                          android:name="com.google.android.wearable.watchface.wearableConfigurationAction"
+                          android:value="androidx.wear.watchface.editor.action.WATCH_FACE_EDITOR" />
+                  </service>
+
+              </application>
+          </manifest>
+          EOF
+
+          # 5. res/xml/watch_face.xml
+          cat << 'EOF' > app/src/main/res/xml/watch_face.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <wallpaper xmlns:android="http://schemas.android.com/apk/res/android" />
+          EOF
+
+          # 6. Извлечение шрифта из истории Git в assets
           FONT_COMMIT=$(git log --all --diff-filter=A --format="%H" -- "**/minecraft.ttf" | head -n 1)
           if [ -n "$FONT_COMMIT" ]; then
             git checkout "$FONT_COMMIT" -- "**/minecraft.ttf" || true
           fi
           FOUND_FONT=$(find . -name "minecraft.ttf" | head -n 1)
           if [ -n "$FOUND_FONT" ]; then
-            cp "$FOUND_FONT" app/src/main/res/font/minecraft.ttf
-          else
-            cp /usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf app/src/main/res/font/minecraft.ttf || true
+            cp "$FOUND_FONT" app/src/main/assets/minecraft.ttf
           fi
 
-          # 3. Генерируем preview.png и watchface.xml
-          python3 - << 'PYEOF'
-          import os, zlib, struct, math
-
-          # Генерация растрового превью preview.png
+          # 7. Генерация превью preview.png
+          python3 -c '
+          import zlib, struct, math
           w, h = 400, 400
           raw = bytearray()
           for y in range(h):
@@ -54,75 +165,165 @@ jobs:
               return struct.pack("!I", len(d)) + t + d + struct.pack("!I", zlib.crc32(t + d) & 0xffffffff)
           png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack("!IIBBBBB", w, h, 8, 6, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(bytes(raw))) + chunk(b"IEND", b"")
           open("app/src/main/res/drawable/preview.png", "wb").write(png)
+          '
 
-          # Логика русского текста
-          def get_russian_time(hour, minute):
-              h12 = 12 if hour % 12 == 0 else hour % 12
-              nextH = 12 if (hour + 1) % 12 == 0 else (hour + 1) % 12
-              nom = ["", "один", "два", "три", "четыре", "пять", "шесть", "семь", "восемь", "девять", "десять", "одиннадцать", "двенадцать"]
-              gen = ["", "первого", "второго", "третьего", "четвертого", "пятого", "шестого", "седьмого", "восьмого", "девятого", "десятого", "одиннадцатого", "двенадцатого"]
-              tod = "утра" if 4 <= hour <= 11 else ("дня" if 12 <= hour <= 16 else ("вечера" if 17 <= hour <= 22 else "ночи"))
+          # 8. Создание Kotlin-кода циферблата на Jetpack WatchFace
+          cat << 'EOF' > app/src/main/java/com/example/wordclock/WordWatchFaceService.kt
+          package com.example.wordclock
 
-              if minute == 0:
-                  if h12 == 1:
-                      return ["час", tod]
-                  elif 2 <= h12 <= 4:
-                      return [nom[h12], "часа", tod]
-                  else:
-                      return [nom[h12], "часов", tod]
-              elif minute == 15:
-                  return ["четверть", gen[nextH]]
-              elif minute == 30:
-                  return ["половина", gen[nextH]]
-              elif minute == 45:
-                  return ["без", "четверти", nom[nextH]]
-              elif minute == 35:
-                  return ["без", "двадцати", "пяти", nom[nextH]]
-              elif 31 <= minute <= 39:
-                  m_words = {31: ["тридцать", "одна"], 32: ["тридцать", "две"], 33: ["тридцать", "три"], 34: ["тридцать", "четыре"], 36: ["тридцать", "шесть"], 37: ["тридцать", "семь"], 38: ["тридцать", "восемь"], 39: ["тридцать", "девять"]}[minute]
-                  return [nom[h12]] + m_words
-              elif minute < 30:
-                  m_map = {1: ["одна", "минута"], 2: ["две", "минуты"], 3: ["три", "минуты"], 4: ["четыре", "минуты"], 5: ["пять", "минут"], 6: ["шесть", "минут"], 7: ["семь", "минут"], 8: ["восемь", "минут"], 9: ["девять", "минут"], 10: ["десять", "минут"], 11: ["одиннадцать", "минут"], 12: ["двенадцать", "минут"], 13: ["тринадцать", "минут"], 14: ["четырнадцать", "минут"], 16: ["шестнадцать", "минут"], 17: ["семнадцать", "минут"], 18: ["восемнадцать", "минут"], 19: ["девятнадцать", "минут"], 20: ["двадцать", "минут"], 21: ["двадцать", "одна", "минута"], 22: ["двадцать", "две", "минуты"], 23: ["двадцать", "три", "минуты"], 24: ["двадцать", "четыре", "минуты"], 25: ["двадцать", "пять", "минут"], 26: ["двадцать", "шесть", "минут"], 27: ["двадцать", "семь", "минут"], 28: ["двадцать", "восемь", "минут"], 29: ["двадцать", "девять", "минут"]}
-                  return m_map[minute] + [gen[nextH]]
-              else:
-                  left = 60 - minute
-                  left_map = {1: ["без", "одной", "минуты"], 2: ["без", "двух", "минут"], 3: ["без", "трех", "минут"], 4: ["без", "четырех", "минут"], 5: ["без", "пяти"], 6: ["без", "шести"], 7: ["без", "семи"], 8: ["без", "восьми"], 9: ["без", "девяти"], 10: ["без", "десяти"], 11: ["без", "одиннадцати"], 12: ["без", "двенадцати"], 13: ["без", "тринадцати"], 14: ["без", "четырнадцати"], 16: ["без", "шестнадцати"], 17: ["без", "семнадцати"], 18: ["без", "восем", "надцати"], 19: ["без", "девятнадцати"], 20: ["без", "двадцати"]}
-                  return left_map[left] + [nom[nextH]]
+          import android.content.Context
+          import android.graphics.Canvas
+          import android.graphics.Color
+          import android.graphics.Paint
+          import android.graphics.Rect
+          import android.graphics.Typeface
+          import android.view.SurfaceHolder
+          import androidx.wear.watchface.CanvasType
+          import androidx.wear.watchface.ComplicationSlotsManager
+          import androidx.wear.watchface.Renderer
+          import androidx.wear.watchface.WatchFace
+          import androidx.wear.watchface.WatchFaceService
+          import androidx.wear.watchface.WatchFaceType
+          import androidx.wear.watchface.WatchState
+          import androidx.wear.watchface.style.CurrentUserStyleRepository
+          import java.time.ZonedDateTime
 
-          xml = [
-              '<WatchFace width="450" height="450">',
-              '    <Metadata key="CLOCK_TYPE" value="DIGITAL"/>',
-              '    <Scene backgroundColor="#ff000000">'
-          ]
+          class WordWatchFaceService : WatchFaceService() {
 
-          def add_group(lines, cond):
-              xml.append(f'        <Group x="0" y="0" width="450" height="450" alpha="{cond}">')
-              n = len(lines)
-              start_y = 180 if n == 2 else (145 if n == 3 else 120)
-              step = 56 if n == 2 else (54 if n == 3 else 52)
-              for i, line in enumerate(lines):
-                  y = start_y + i * step
-                  weight_attr = ' weight="BOLD"' if (i == n - 1) else ''
-                  xml.append(f'            <PartText x="75" y="{y}" width="320" height="{step}">')
-                  xml.append('                <Text align="LEFT">')
-                  xml.append(f'                    <Font family="minecraft" size="36" color="#FFFFFFFF"{weight_attr}>')
-                  xml.append(f'                        <Template>{line}</Template>')
-                  xml.append('                    </Font>')
-                  xml.append('                </Text>')
-                  xml.append('            </PartText>')
-              xml.append('        </Group>')
+              override suspend fun createWatchFace(
+                  surfaceHolder: SurfaceHolder,
+                  watchState: WatchState,
+                  complicationSlotsManager: ComplicationSlotsManager,
+                  currentUserStyleRepository: CurrentUserStyleRepository
+              ): WatchFace {
+                  val renderer = WordCanvasRenderer(
+                      context = applicationContext,
+                      surfaceHolder = surfaceHolder,
+                      currentUserStyleRepository = currentUserStyleRepository,
+                      watchState = watchState
+                  )
+                  return WatchFace(
+                      watchFaceType = WatchFaceType.DIGITAL,
+                      renderer = renderer
+                  )
+              }
+          }
 
-          for h in range(24):
-              add_group(get_russian_time(h, 0), f"[HOUR_0_23] == {h} &amp;&amp; [MINUTE] == 0 ? 255 : 0")
+          class WordCanvasRenderer(
+              private val context: Context,
+              surfaceHolder: SurfaceHolder,
+              currentUserStyleRepository: CurrentUserStyleRepository,
+              watchState: WatchState
+          ) : Renderer.CanvasRenderer(
+              surfaceHolder = surfaceHolder,
+              currentUserStyleRepository = currentUserStyleRepository,
+              watchState = watchState,
+              canvasType = CanvasType.HARDWARE,
+              interactiveDrawModeUpdateDelayMillis = 1000L,
+              clearWithBackgroundTintBeforeDrawing = true
+          ) {
+              private val textPaint = Paint().apply {
+                  isAntiAlias = true
+                  color = Color.WHITE
+                  textSize = 36f
+                  try {
+                      typeface = Typeface.createFromAsset(context.assets, "minecraft.ttf")
+                  } catch (e: Exception) {
+                      typeface = Typeface.MONOSPACE
+                  }
+              }
 
-          for h12 in range(1, 13):
-              for m in range(1, 60):
-                  add_group(get_russian_time(h12, m), f"[HOUR_1_12] == {h12} &amp;&amp; [MINUTE] == {m} ? 255 : 0")
+              override fun render(
+                  canvas: Canvas,
+                  bounds: Rect,
+                  zonedDateTime: ZonedDateTime
+              ) {
+                  canvas.drawColor(Color.BLACK)
+                  val hour = zonedDateTime.hour
+                  val minute = zonedDateTime.minute
+                  val lines = getRussianTime(hour, minute)
 
-          xml.append('    </Scene>')
-          xml.append('</WatchFace>')
-          open("app/src/main/res/raw/watchface.xml", "w", encoding="utf-8").write("\n".join(xml))
-          PYEOF
+                  val n = lines.size
+                  val startY = if (n == 2) 180f else if (n == 3) 145f else 120f
+                  val step = if (n == 2) 56f else if (n == 3) 54f else 52f
+
+                  lines.forEachIndexed { i, line ->
+                      val y = startY + i * step
+                      canvas.drawText(line, 75f, y, textPaint)
+                  }
+              }
+
+              override fun renderHighlightLayer(
+                  canvas: Canvas,
+                  bounds: Rect,
+                  zonedDateTime: ZonedDateTime
+              ) {
+              }
+
+              private fun getRussianTime(hour: Int, minute: Int): List<String> {
+                  val h12 = if (hour % 12 == 0) 12 else hour % 12
+                  val nextH = if ((hour + 1) % 12 == 0) 12 else (hour + 1) % 12
+                  val nom = listOf("", "один", "два", "три", "четыре", "пять", "шесть", "семь", "восемь", "девять", "десять", "одиннадцать", "двенадцать")
+                  val gen = listOf("", "первого", "второго", "третьего", "четвертого", "пятого", "шестого", "седьмого", "восьмого", "девятого", "десятого", "одиннадцатого", "двенадцатого")
+                  val tod = if (hour in 4..11) "утра" else if (hour in 12..16) "дня" else if (hour in 17..22) "вечера" else "ночи"
+
+                  return when {
+                      minute == 0 -> {
+                          when (h12) {
+                              1 -> listOf("час", tod)
+                              in 2..4 -> listOf(nom[h12], "часа", tod)
+                              else -> listOf(nom[h12], "часов", tod)
+                          }
+                      }
+                      minute == 15 -> listOf("четверть", gen[nextH])
+                      minute == 30 -> listOf("половина", gen[nextH])
+                      minute == 45 -> listOf("без", "четверти", nom[nextH])
+                      minute == 35 -> listOf("без", "двадцати", "пяти", nom[nextH])
+                      minute in 31..39 -> {
+                          val mWords = mapOf(
+                              31 to listOf("тридцать", "одна"),
+                              32 to listOf("тридцать", "две"),
+                              33 to listOf("тридцать", "три"),
+                              34 to listOf("тридцать", "четыре"),
+                              36 to listOf("тридцать", "шесть"),
+                              37 to listOf("тридцать", "семь"),
+                              38 to listOf("тридцать", "восемь"),
+                              39 to listOf("тридцать", "девять")
+                          )[minute] ?: listOf()
+                          listOf(nom[h12]) + mWords
+                      }
+                      minute < 30 -> {
+                          val mMap = mapOf(
+                              1 to listOf("одна", "минута"), 2 to listOf("две", "минуты"), 3 to listOf("три", "минуты"),
+                              4 to listOf("четыре", "минуты"), 5 to listOf("пять", "минут"), 6 to listOf("шесть", "минут"),
+                              7 to listOf("семь", "минут"), 8 to listOf("восемь", "минут"), 9 to listOf("девять", "минут"),
+                              10 to listOf("десять", "минут"), 11 to listOf("одиннадцать", "минут"), 12 to listOf("двенадцать", "минут"),
+                              13 to listOf("тринадцать", "минут"), 14 to listOf("четырнадцать", "минут"), 16 to listOf("шестнадцать", "минут"),
+                              17 to listOf("семнадцать", "минут"), 18 to listOf("восемнадцать", "минут"), 19 to listOf("девятнадцать", "минут"),
+                              20 to listOf("двадцать", "минут"), 21 to listOf("двадцать", "одна", "минута"), 22 to listOf("двадцать", "две", "минуты"),
+                              23 to listOf("двадцать", "три", "минуты"), 24 to listOf("двадцать", "четыре", "минуты"), 25 to listOf("двадцать", "пять", "минут"),
+                              26 to listOf("двадцать", "шесть", "минут"), 27 to listOf("двадцать", "семь", "минут"), 28 to listOf("двадцать", "восемь", "минут"),
+                              29 to listOf("двадцать", "девять", "минут")
+                          )[minute] ?: listOf()
+                          mMap + listOf(gen[nextH])
+                      }
+                      else -> {
+                          val left = 60 - minute
+                          val leftMap = mapOf(
+                              1 to listOf("без", "одной", "минуты"), 2 to listOf("без", "двух", "минут"), 3 to listOf("без", "трех", "минут"),
+                              4 to listOf("без", "четырех", "минут"), 5 to listOf("без", "пяти"), 6 to listOf("без", "шести"),
+                              7 to listOf("без", "семи"), 8 to listOf("без", "восьми"), 9 to listOf("без", "девяти"),
+                              10 to listOf("без", "десяти"), 11 to listOf("без", "одиннадцати"), 12 to listOf("двенадцати"),
+                              13 to listOf("без", "тринадцати"), 14 to listOf("без", "четырнадцати"), 16 to listOf("без", "шестнадцати"),
+                              17 to listOf("без", "семнадцати"), 18 to listOf("без", "восем", "надцати"), 19 to listOf("девятнадцати"),
+                              20 to listOf("без", "двадцати")
+                          )[left] ?: listOf()
+                          leftMap + listOf(nom[nextH])
+                      }
+                  }
+              }
+          }
+          EOF
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
