@@ -194,8 +194,7 @@ class WordCanvasRenderer(
     currentUserStyleRepository = currentUserStyleRepository,
     watchState = watchState,
     canvasType = CanvasType.HARDWARE,
-    interactiveDrawModeUpdateDelayMillis = 1000L,
-    clearWithBackgroundTintBeforeDrawing = true
+    interactiveDrawModeUpdateDelayMillis = 1000L
 ) {
     private val textPaint = Paint().apply {
         isAntiAlias = true
@@ -299,4 +298,3 @@ class WordCanvasRenderer(
     }
 }
 """)
-  
