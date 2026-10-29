@@ -9,12 +9,120 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Repository
+      - name: Checkout Repository with History
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Unpack WordClock_WFF.zip
+      - name: Generate All Watch Face Format Resources
         run: |
-          unzip -o WordClock_WFF.zip -x ".github/*"
+          # 1. Создаем корневой build.gradle.kts
+          cat << 'EOF' > build.gradle.kts
+          plugins {
+              id("com.android.application") version "8.4.1" apply false
+          }
+          EOF
+
+          mkdir -p app/src/main/res/font app/src/main/res/drawable app/src/main/res/raw
+
+          # 2. Достаем minecraft.ttf из истории коммитов репозитория
+          FONT_COMMIT=$(git log --all --diff-filter=A --format="%H" -- "**/minecraft.ttf" | head -n 1)
+          if [ -n "$FONT_COMMIT" ]; then
+            git checkout "$FONT_COMMIT" -- "**/minecraft.ttf" || true
+          fi
+          FOUND_FONT=$(find . -name "minecraft.ttf" | head -n 1)
+          if [ -n "$FOUND_FONT" ]; then
+            cp "$FOUND_FONT" app/src/main/res/font/minecraft.ttf
+          else
+            cp /usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf app/src/main/res/font/minecraft.ttf || true
+          fi
+
+          # 3. Генерируем preview.png и watchface.xml
+          python3 - << 'PYEOF'
+          import os, zlib, struct, math
+
+          # Генерация растрового превью preview.png
+          w, h = 400, 400
+          raw = bytearray()
+          for y in range(h):
+              raw.append(0)
+              for x in range(w):
+                  d = math.hypot(x - 200, y - 200)
+                  c = 255 if (180 <= d <= 192) else 0
+                  raw.extend((c, c, c, 255))
+          def chunk(t, d):
+              return struct.pack("!I", len(d)) + t + d + struct.pack("!I", zlib.crc32(t + d) & 0xffffffff)
+          png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack("!IIBBBBB", w, h, 8, 6, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(bytes(raw))) + chunk(b"IEND", b"")
+          open("app/src/main/res/drawable/preview.png", "wb").write(png)
+
+          # Логика русского текста
+          def get_russian_time(hour, minute):
+              h12 = 12 if hour % 12 == 0 else hour % 12
+              nextH = 12 if (hour + 1) % 12 == 0 else (hour + 1) % 12
+              nom = ["", "один", "два", "три", "четыре", "пять", "шесть", "семь", "восемь", "девять", "десять", "одиннадцать", "двенадцать"]
+              gen = ["", "первого", "второго", "третьего", "четвертого", "пятого", "шестого", "седьмого", "восьмого", "девятого", "десятого", "одиннадцатого", "двенадцатого"]
+              tod = "утра" if 4 <= hour <= 11 else ("дня" if 12 <= hour <= 16 else ("вечера" if 17 <= hour <= 22 else "ночи"))
+
+              if minute == 0:
+                  if h12 == 1:
+                      return ["час", tod]
+                  elif 2 <= h12 <= 4:
+                      return [nom[h12], "часа", tod]
+                  else:
+                      return [nom[h12], "часов", tod]
+              elif minute == 15:
+                  return ["четверть", gen[nextH]]
+              elif minute == 30:
+                  return ["половина", gen[nextH]]
+              elif minute == 45:
+                  return ["без", "четверти", nom[nextH]]
+              elif minute == 35:
+                  return ["без", "двадцати", "пяти", nom[nextH]]
+              elif 31 <= minute <= 39:
+                  m_words = {31: ["тридцать", "одна"], 32: ["тридцать", "две"], 33: ["тридцать", "три"], 34: ["тридцать", "четыре"], 36: ["тридцать", "шесть"], 37: ["тридцать", "семь"], 38: ["тридцать", "восемь"], 39: ["тридцать", "девять"]}[minute]
+                  return [nom[h12]] + m_words
+              elif minute < 30:
+                  m_map = {1: ["одна", "минута"], 2: ["две", "минуты"], 3: ["три", "минуты"], 4: ["четыре", "минуты"], 5: ["пять", "минут"], 6: ["шесть", "минут"], 7: ["семь", "минут"], 8: ["восемь", "минут"], 9: ["девять", "минут"], 10: ["десять", "минут"], 11: ["одиннадцать", "минут"], 12: ["двенадцать", "минут"], 13: ["тринадцать", "минут"], 14: ["четырнадцать", "минут"], 16: ["шестнадцать", "минут"], 17: ["семнадцать", "минут"], 18: ["восемнадцать", "минут"], 19: ["девятнадцать", "минут"], 20: ["двадцать", "минут"], 21: ["двадцать", "одна", "минута"], 22: ["двадцать", "две", "минуты"], 23: ["двадцать", "три", "минуты"], 24: ["двадцать", "четыре", "минуты"], 25: ["двадцать", "пять", "минут"], 26: ["двадцать", "шесть", "минут"], 27: ["двадцать", "семь", "минут"], 28: ["двадцать", "восемь", "минут"], 29: ["двадцать", "девять", "минут"]}
+                  return m_map[minute] + [gen[nextH]]
+              else:
+                  left = 60 - minute
+                  left_map = {1: ["без", "одной", "минуты"], 2: ["без", "двух", "минут"], 3: ["без", "трех", "минут"], 4: ["без", "четырех", "минут"], 5: ["без", "пяти"], 6: ["без", "шести"], 7: ["без", "семи"], 8: ["без", "восьми"], 9: ["без", "девяти"], 10: ["без", "десяти"], 11: ["без", "одиннадцати"], 12: ["без", "двенадцати"], 13: ["без", "тринадцати"], 14: ["без", "четырнадцати"], 16: ["без", "шестнадцати"], 17: ["без", "семнадцати"], 18: ["без", "восем", "надцати"], 19: ["без", "девятнадцати"], 20: ["без", "двадцати"]}
+                  return left_map[left] + [nom[nextH]]
+
+          xml = [
+              '<WatchFace width="450" height="450">',
+              '    <Metadata key="CLOCK_TYPE" value="DIGITAL"/>',
+              '    <Scene backgroundColor="#ff000000">'
+          ]
+
+          def add_group(lines, cond):
+              xml.append(f'        <Group x="0" y="0" width="450" height="450" alpha="{cond}">')
+              n = len(lines)
+              start_y = 180 if n == 2 else (145 if n == 3 else 120)
+              step = 56 if n == 2 else (54 if n == 3 else 52)
+              for i, line in enumerate(lines):
+                  y = start_y + i * step
+                  weight_attr = ' weight="BOLD"' if (i == n - 1) else ''
+                  xml.append(f'            <PartText x="75" y="{y}" width="320" height="{step}">')
+                  xml.append('                <Text align="LEFT">')
+                  xml.append(f'                    <Font family="minecraft" size="36" color="#FFFFFFFF"{weight_attr}>')
+                  xml.append(f'                        <Template>{line}</Template>')
+                  xml.append('                    </Font>')
+                  xml.append('                </Text>')
+                  xml.append('            </PartText>')
+              xml.append('        </Group>')
+
+          for h in range(24):
+              add_group(get_russian_time(h, 0), f"[HOUR_0_23] == {h} &amp;&amp; [MINUTE] == 0 ? 255 : 0")
+
+          for h12 in range(1, 13):
+              for m in range(1, 60):
+                  add_group(get_russian_time(h12, m), f"[HOUR_1_12] == {h12} &amp;&amp; [MINUTE] == {m} ? 255 : 0")
+
+          xml.append('    </Scene>')
+          xml.append('</WatchFace>')
+          open("app/src/main/res/raw/watchface.xml", "w", encoding="utf-8").write("\n".join(xml))
+          PYEOF
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
