@@ -17,13 +17,15 @@ jobs:
       - name: Run Project Generator
         run: |
           python3 generate.py
-          FONT_COMMIT=$(git log --all --diff-filter=A --format="%H" -- "**/minecraft.ttf" | head -n 1) || true
-          if [ -n "$FONT_COMMIT" ]; then
-            git checkout "$FONT_COMMIT" -- "**/minecraft.ttf" || true
-          fi
-          FOUND_FONT=$(find . -name "minecraft.ttf" | head -n 1) || true
-          if [ -n "$FOUND_FONT" ]; then
-            cp "$FOUND_FONT" app/src/main/assets/minecraft.ttf
+          if [ ! -f "app/src/main/assets/minecraft.ttf" ]; then
+            FONT_COMMIT=$(git log --all --diff-filter=A --format="%H" -- "**/minecraft.ttf" | head -n 1) || true
+            if [ -n "$FONT_COMMIT" ]; then
+              git checkout "$FONT_COMMIT" -- "**/minecraft.ttf" || true
+            fi
+            FOUND=$(find . -name "minecraft.ttf" ! -path "./app/src/main/assets/*" | head -n 1) || true
+            if [ -n "$FOUND" ]; then
+              cp "$FOUND" app/src/main/assets/minecraft.ttf
+            fi
           fi
 
       - name: Set up JDK 17
