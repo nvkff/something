@@ -57,7 +57,6 @@ class WordWatchFaceService : WatchFaceService() {
         interactiveDrawModeUpdateDelayMillis,
         clearWithBackgroundTintBeforeRenderingHighlightLayer = true
     ) {
-        // Чтение шрифта из папки assets (если файла нет — используется Monospace)
         private val pixelFont: Typeface by lazy {
             try {
                 Typeface.createFromAsset(this@WordWatchFaceService.assets, "minecraft.ttf")
@@ -76,9 +75,7 @@ class WordWatchFaceService : WatchFaceService() {
             textAlign = Paint.Align.LEFT
         }
 
-        override suspend fun createSharedAssets(): NoSharedAssets {
-            return NoSharedAssets()
-        }
+        override suspend fun createSharedAssets(): NoSharedAssets = NoSharedAssets()
 
         override fun render(
             canvas: Canvas,
@@ -88,7 +85,6 @@ class WordWatchFaceService : WatchFaceService() {
         ) {
             val isAmbient = renderParameters.drawMode == DrawMode.AMBIENT
 
-            // Всегда глубокий черный фон
             canvas.drawColor(Color.BLACK)
 
             paintRegular.typeface = pixelFont
@@ -97,26 +93,23 @@ class WordWatchFaceService : WatchFaceService() {
             paintBold.isAntiAlias = false
 
             if (isAmbient) {
-                // Режим AOD (Always-On): полый контур с белой рамкой
                 paintRegular.style = Paint.Style.STROKE
                 paintRegular.strokeWidth = bounds.width() * 0.006f
-
                 paintBold.style = Paint.Style.STROKE
                 paintBold.strokeWidth = bounds.width() * 0.012f
             } else {
-                // Активный режим: сплошная белая заливка
                 paintRegular.style = Paint.Style.FILL
                 paintBold.style = Paint.Style.FILL
             }
 
             val lines = getRussianTime(zonedDateTime.hour, zonedDateTime.minute)
             val fontSize = bounds.width() * 0.088f
-            val lineSpacing = fontSize * 1.35f
+            val lineSpacing = fontSize * 1.32f
 
             paintRegular.textSize = fontSize
             paintBold.textSize = fontSize
 
-            val startX = bounds.left + bounds.width() * 0.20f
+            val startX = bounds.left + bounds.width() * 0.18f
             var startY = bounds.centerY() - (lines.size * lineSpacing / 2f) + fontSize
 
             for (i in lines.indices) {
@@ -134,8 +127,8 @@ class WordWatchFaceService : WatchFaceService() {
         ) {}
 
         private fun getRussianTime(hour: Int, min: Int): List<String> {
-            val h12 = (if (min > 30) hour + 1 else hour) % 12
-            val nextH = if (h12 == 0) 12 else h12
+            val h12 = if (hour % 12 == 0) 12 else hour % 12
+            val nextH = if ((hour + 1) % 12 == 0) 12 else (hour + 1) % 12
 
             val nom = arrayOf(
                 "", "один", "два", "три", "четыре", "пять",
@@ -146,37 +139,92 @@ class WordWatchFaceService : WatchFaceService() {
                 "шестого", "седьмого", "восьмого", "девятого", "десятого", "одиннадцатого", "двенадцатого"
             )
 
+            val tod = when (hour) {
+                in 4..11 -> "утра"
+                in 12..16 -> "дня"
+                in 17..22 -> "вечера"
+                else -> "ночи"
+            }
+
             return when {
                 min == 0 -> {
-                    val tod = when (hour) {
-                        in 4..11 -> "утра"
-                        in 12..16 -> "дня"
-                        in 17..22 -> "вечера"
-                        else -> "ночи"
+                    when (h12) {
+                        1 -> listOf("час", "ночи")
+                        in 2..4 -> listOf(nom[h12], "часа", tod)
+                        else -> listOf(nom[h12], "часов", tod)
                     }
-                    val curH = if (hour % 12 == 0) 12 else hour % 12
-                    listOf(nom[curH], "часов", tod)
                 }
                 min == 15 -> listOf("четверть", gen[nextH])
                 min == 30 -> listOf("половина", gen[nextH])
                 min == 45 -> listOf("без", "четверти", nom[nextH])
+                min == 35 -> listOf("без", "двадцати", "пяти", nom[nextH])
+                min in 31..39 -> {
+                    val mWords = when (min) {
+                        31 -> listOf("тридцать", "один")
+                        32 -> listOf("тридцать", "два")
+                        33 -> listOf("тридцать", "три")
+                        34 -> listOf("тридцать", "четыре")
+                        36 -> listOf("тридцать", "шесть")
+                        37 -> listOf("тридцать", "семь")
+                        38 -> listOf("тридцать", "восемь")
+                        else -> listOf("тридцать", "девять")
+                    }
+                    listOf(nom[h12]) + mWords
+                }
                 min < 30 -> {
-                    val mWord = when (min) {
+                    val mWords = when (min) {
                         1 -> listOf("одна", "минута")
                         2 -> listOf("две", "минуты")
+                        3 -> listOf("три", "минуты")
+                        4 -> listOf("четыре", "минуты")
                         5 -> listOf("пять", "минут")
+                        6 -> listOf("шесть", "минут")
+                        7 -> listOf("семь", "минут")
+                        8 -> listOf("восемь", "минут")
+                        9 -> listOf("девять", "минут")
                         10 -> listOf("десять", "минут")
+                        11 -> listOf("одиннадцать", "минут")
+                        12 -> listOf("двенадцать", "минут")
+                        13 -> listOf("тринадцать", "минут")
+                        14 -> listOf("четырнадцать", "минут")
+                        16 -> listOf("шестнадцать", "минут")
+                        17 -> listOf("семнадцать", "минут")
+                        18 -> listOf("восемнадцать", "минут")
+                        19 -> listOf("девятнадцать", "минут")
                         20 -> listOf("двадцать", "минут")
-                        else -> listOf("$min", "минут")
+                        21 -> listOf("двадцать", "одна", "минута")
+                        22 -> listOf("двадцать", "две", "минуты")
+                        23 -> listOf("двадцать", "три", "минуты")
+                        24 -> listOf("двадцать", "четыре", "минуты")
+                        25 -> listOf("двадцать", "пять", "минут")
+                        26 -> listOf("двадцать", "шесть", "минут")
+                        27 -> listOf("двадцать", "семь", "минут")
+                        28 -> listOf("двадцать", "восемь", "минут")
+                        else -> listOf("двадцать", "девять", "минут")
                     }
-                    mWord + listOf(gen[nextH])
+                    mWords + listOf(gen[nextH])
                 }
                 else -> {
                     val left = 60 - min
                     val leftWords = when (left) {
+                        1 -> listOf("без", "одной", "минуты")
+                        2 -> listOf("без", "двух", "минут")
+                        3 -> listOf("без", "трех", "минут")
+                        4 -> listOf("без", "четырех", "минут")
                         5 -> listOf("без", "пяти")
+                        6 -> listOf("без", "шести")
+                        7 -> listOf("без", "семи")
+                        8 -> listOf("без", "восьми")
+                        9 -> listOf("без", "девяти")
                         10 -> listOf("без", "десяти")
-                        15 -> listOf("без", "четверти")
+                        11 -> listOf("без", "одиннадцати")
+                        12 -> listOf("без", "двенадцати")
+                        13 -> listOf("без", "тринадцати")
+                        14 -> listOf("без", "четырнадцати")
+                        16 -> listOf("без", "шестнадцати")
+                        17 -> listOf("без", "семнадцати")
+                        18 -> listOf("без", "восем", "надцати")
+                        19 -> listOf("без", "девятнадцати")
                         20 -> listOf("без", "двадцати")
                         else -> listOf("без", "$left")
                     }
