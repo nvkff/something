@@ -14,6 +14,7 @@ jobs:
 
       - name: Generate Raster PNG Preview
         run: |
+          mkdir -p app/src/main/res/drawable
           python3 -c '
           import zlib, struct, math
           w, h = 400, 400
