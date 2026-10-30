@@ -1,4 +1,4 @@
-# Russian Word Clock (Watch Face Format)
+# Word Clock (Watch Face Format)
 
 Нативный циферблат для Wear OS 4+ (OnePlus Watch, Pixel Watch, Galaxy Watch), отображающий текущее время исключительно русскими словами.
 
