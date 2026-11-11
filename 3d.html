@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Client-Side 3D Splat Cloud</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #07070a; color: #e4e4e7; font-family: system-ui, -apple-system, sans-serif; overflow: hidden; }
+    #canvas-container { width: 100vw; height: 100vh; }
+    
+    .panel {
+      position: fixed; top: 16px; left: 16px; width: 330px;
+      background: rgba(18, 18, 24, 0.88); backdrop-filter: blur(14px);
+      border: 1px solid rgba(255,255,255,0.12); border-radius: 14px;
+      padding: 18px; z-index: 10; display: flex; flex-direction: column; gap: 14px;
+      box-shadow: 0 16px 36px rgba(0,0,0,0.6);
+    }
+    
+    h1 { font-size: 15px; font-weight: 600; display: flex; align-items: center; justify-content: space-between; }
+    .badge { font-size: 10px; background: rgba(99,102,241,0.2); color: #818cf8; padding: 2px 7px; border-radius: 6px; border: 1px solid rgba(99,102,241,0.3); }
+    
+    .drop-zone {
+      border: 1.5px dashed rgba(255,255,255,0.2); border-radius: 10px;
+      padding: 20px 12px; text-align: center; cursor: pointer;
+      transition: 0.2s; font-size: 13px; color: #a1a1aa;
+    }
+    .drop-zone:hover { border-color: #6366f1; color: #fff; background: rgba(99,102,241,0.06); }
+    
+    .status { font-size: 12px; color: #a1a1aa; line-height: 1.4; }
+    .status b { color: #818cf8; }
+
+    .control { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #a1a1aa; }
+    .control-header { display: flex; justify-content: space-between; }
+    input[type="range"] { width: 100%; accent-color: #6366f1; cursor: pointer; }
+    
+    .btn-row { display: flex; gap: 8px; }
+    button {
+      flex: 1; padding: 8px 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(255,255,255,0.06); color: #fff; font-size: 12px; cursor: pointer; transition: 0.15s;
+    }
+    button:hover { background: rgba(99,102,241,0.25); border-color: #6366f1; }
+    button.active { background: #6366f1; border-color: #6366f1; }
+    
+    .progress-bar { width: 100%; height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; overflow: hidden; display: none; }
+    .progress-bar-fill { height: 100%; width: 0%; background: #6366f1; transition: width 0.2s; }
+  </style>
+</head>
+<body>
+
+<div class="panel">
+  <h1>
+    <span>Neural Splat 3D</span>
+    <span class="badge" id="backend-badge">WebGPU / WASM</span>
+  </h1>
+
+  <label class="drop-zone" id="drop-zone">
+    Закинь полноразмерное фото сюда
+    <input type="file" id="file-input" accept="image/*" hidden>
+  </label>
+
+  <div class="progress-bar" id="p-bar"><div class="progress-bar-fill" id="p-fill"></div></div>
+  <div class="status" id="status-text">Инициализация AI рантайма...</div>
+
+  <div class="control">
+    <div class="control-header"><span>Количество сплэтов (LOD)</span><span id="val-lod">600K</span></div>
+    <input type="range" id="rng-lod" min="300" max="1400" step="50" value="800">
+  </div>
+
+  <div class="control">
+    <div class="control-header"><span>Глубина объема (Displacement)</span><span id="val-depth">1.8</span></div>
+    <input type="range" id="rng-depth" min="0" max="5" step="0.05" value="1.8">
+  </div>
+
+  <div class="control">
+    <div class="control-header"><span>Размер сплэтов</span><span id="val-size">5.5</span></div>
+    <input type="range" id="rng-size" min="1" max="18" step="0.2" value="5.5">
+  </div>
+
+  <div class="control">
+    <div class="control-header"><span>Мягкость Гауссианы</span><span id="val-soft">1.6</span></div>
+    <input type="range" id="rng-soft" min="0.5" max="3.5" step="0.1" value="1.6">
+  </div>
+
+  <div class="btn-row">
+    <button id="btn-orbit" class="active">Авто-облёт</button>
+    <button id="btn-invert">Инверт Z</button>
+    <button id="btn-reset">Сброс вида</button>
+  </div>
+</div>
+
+<div id="canvas-container"></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.164.1/examples/jsm/",
+    "@huggingface/transformers": "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { pipeline, env } from '@huggingface/transformers';
+
+const statusText = document.getElementById('status-text');
+const pBar = document.getElementById('p-bar');
+const pFill = document.getElementById('p-fill');
+const badge = document.getElementById('backend-badge');
+
+// Настройка Three.js
+const container = document.getElementById('canvas-container');
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
+camera.position.set(0, 0, 3.2);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+container.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.06;
+
+// Шейдеры с выборкой напрямую из полноразмерных текстур
+const vertexShader = `
+  uniform sampler2D uDepthMap;
+  uniform sampler2D uColorMap;
+  uniform float uDepthScale;
+  uniform float uPointSize;
+  uniform float uInvert;
+  varying vec3 vColor;
+  varying float vDepth;
+
+  void main() {
+    vec2 uv = position.xy;
+    vec4 col = texture2D(uColorMap, uv);
+    vColor = col.rgb;
+
+    float rawDepth = texture2D(uDepthMap, uv).r;
+    float d = uInvert > 0.5 ? (1.0 - rawDepth) : rawDepth;
+    vDepth = d;
+
+    // Центрирование плоскости с учетом соотношения сторон
+    vec3 pos = vec3((uv.x - 0.5) * position.z, -(uv.y - 0.5), (d - 0.5) * uDepthScale);
+
+    vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+    gl_Position = projectionMatrix * mvPosition;
+
+    // Перспективное масштабирование сплэтов
+    gl_PointSize = uPointSize * (2.8 / -mvPosition.z);
+  }
+`;
+
+const fragmentShader = `
+  uniform float uSoftness;
+  varying vec3 vColor;
+  varying float vDepth;
+
+  void main() {
+    vec2 uv = gl_PointCoord - vec2(0.5);
+    float distSq = dot(uv, uv) * 4.0;
+    if (distSq > 1.0) discard;
+
+    // 2D Гауссовский спад
+    float alpha = exp(-distSq * (2.4 / uSoftness));
+    gl_FragColor = vec4(vColor, alpha * 0.95);
+  }
+`;
+
+const uniforms = {
+  uDepthMap: { value: null },
+  uColorMap: { value: null },
+  uDepthScale: { value: 1.8 },
+  uPointSize: { value: 5.5 },
+  uSoftness: { value: 1.6 },
+  uInvert: { value: 0.0 }
+};
+
+let splatPoints = null;
+let currentDepthTexture = null;
+let currentColorTexture = null;
+let currentAspect = 1.0;
+
+function rebuildMesh() {
+  if (!currentDepthTexture || !currentColorTexture) return;
+  if (splatPoints) {
+    scene.remove(splatPoints);
+    splatPoints.geometry.dispose();
+  }
+
+  const baseDim = parseInt(document.getElementById('rng-lod').value);
+  const w = Math.round(baseDim * (currentAspect >= 1 ? currentAspect : 1));
+  const h = Math.round(baseDim / (currentAspect < 1 ? currentAspect : 1));
+  const count = w * h;
+
+  document.getElementById('val-lod').textContent = count > 1e6 ? `${(count/1e6).toFixed(1)}M` : `${Math.round(count/1e3)}K`;
+
+  const positions = new Float32Array(count * 3);
+  let ptr = 0;
+
+  for (let y = 0; y < h; y++) {
+    const v = y / (h - 1);
+    for (let x = 0; x < w; x++) {
+      const u = x / (w - 1);
+      positions[ptr * 3] = u;
+      positions[ptr * 3 + 1] = v;
+      positions[ptr * 3 + 2] = currentAspect * 2.4; // Передаем аспект в z для нормализации
+      ptr++;
+    }
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+  const material = new THREE.ShaderMaterial({
+    vertexShader,
+    fragmentShader,
+    uniforms,
+    transparent: true,
+    depthWrite: false, // Отключаем жесткий depth-write для мягкого смешивания сплэтов
+    blending: THREE.NormalBlending
+  });
+
+  splatPoints = new THREE.Points(geometry, material);
+  scene.add(splatPoints);
+}
+
+// Загрузка нейросети в браузер (Transformers.js)
+let depthEstimator = null;
+async function initPipeline() {
+  try {
+    const hasWebGPU = !!navigator.gpu;
+    badge.textContent = hasWebGPU ? 'WebGPU' : 'WASM (CPU)';
+    
+    depthEstimator = await pipeline('depth-estimation', 'onnx-community/Depth-Anything-V2-Small', {
+      device: hasWebGPU ? 'webgpu' : 'wasm',
+      dtype: hasWebGPU ? 'fp32' : 'q8',
+      progress_callback: p => {
+        if (p.status === 'progress') {
+          pBar.style.display = 'block';
+          pFill.style.width = `${Math.round(p.progress || 0)}%`;
+          statusText.textContent = `Загрузка весов AI: ${Math.round(p.progress || 0)}%`;
+        }
+        if (p.status === 'ready') {
+          pBar.style.display = 'none';
+          statusText.textContent = 'Нейросеть готова к работе. Загрузи фото.';
+        }
+      }
+    });
+    statusText.textContent = 'Нейросеть готова к работе. Загрузи фото.';
+  } catch (err) {
+    statusText.innerHTML = `<span style="color:#f87171">Ошибка WebGPU. Перезагрузка в WASM...</span>`;
+    depthEstimator = await pipeline('depth-estimation', 'onnx-community/Depth-Anything-V2-Small', { device: 'wasm' });
+    statusText.textContent = 'Готово (режим WASM). Загрузи фото.';
+  }
+}
+initPipeline();
+
+// Обработка оригинального файла без сжатия
+async function handleFile(file) {
+  if (!depthEstimator) {
+    alert('Подожди секунду, нейросеть еще загружается в браузер.');
+    return;
+  }
+
+  statusText.textContent = 'Чтение исходника в полном разрешении...';
+  pBar.style.display = 'block';
+  pFill.style.width = '30%';
+
+  const imgUrl = URL.createObjectURL(file);
+  const fullImg = new Image();
+  fullImg.src = imgUrl;
+  await fullImg.decode();
+
+  currentAspect = fullImg.naturalWidth / fullImg.naturalHeight;
+
+  // 1. Полноразмерная цветная текстура прямо из оригинала (без сжатия)
+  currentColorTexture = new THREE.Texture(fullImg);
+  currentColorTexture.minFilter = THREE.LinearFilter;
+  currentColorTexture.magFilter = THREE.LinearFilter;
+  currentColorTexture.needsUpdate = true;
+  uniforms.uColorMap.value = currentColorTexture;
+
+  statusText.textContent = 'Нейросеть оценивает глубину...';
+  pFill.style.width = '65%';
+
+  // 2. Инференс
+  const result = await depthEstimator(imgUrl);
+  pFill.style.width = '90%';
+
+  // 3. Создаем текстуру карты глубины из сырого результата
+  const rawDepthCanvas = document.createElement('canvas');
+  rawDepthCanvas.width = result.depth.width;
+  rawDepthCanvas.height = result.depth.height;
+  const ctx = rawDepthCanvas.getContext('2d');
+  
+  const imgData = ctx.createImageData(rawDepthCanvas.width, rawDepthCanvas.height);
+  const data = imgData.data;
+  const rawValues = result.depth.data;
+
+  for (let i = 0; i < rawValues.length; i++) {
+    const val = rawValues[i];
+    data[i * 4] = val;
+    data[i * 4 + 1] = val;
+    data[i * 4 + 2] = val;
+    data[i * 4 + 3] = 255;
+  }
+  ctx.putImageData(imgData, 0, 0);
+
+  currentDepthTexture = new THREE.CanvasTexture(rawDepthCanvas);
+  currentDepthTexture.minFilter = THREE.LinearFilter;
+  currentDepthTexture.magFilter = THREE.LinearFilter;
+  currentDepthTexture.needsUpdate = true;
+  uniforms.uDepthMap.value = currentDepthTexture;
+
+  pFill.style.width = '100%';
+  setTimeout(() => pBar.style.display = 'none', 300);
+
+  statusText.innerHTML = `Готово! Разрешение фото: <b>${fullImg.naturalWidth}×${fullImg.naturalHeight}</b>`;
+  rebuildMesh();
+}
+
+// UI Листенеры
+const dropZone = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+dropZone.onclick = () => fileInput.click();
+fileInput.onchange = e => e.target.files[0] && handleFile(e.target.files[0]);
+dropZone.ondragover = e => { e.preventDefault(); dropZone.style.borderColor = '#6366f1'; };
+dropZone.ondrop = e => {
+  e.preventDefault();
+  if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+};
+
+document.getElementById('rng-lod').oninput = rebuildMesh;
+document.getElementById('rng-depth').oninput = e => {
+  uniforms.uDepthScale.value = parseFloat(e.target.value);
+  document.getElementById('val-depth').textContent = e.target.value;
+};
+document.getElementById('rng-size').oninput = e => {
+  uniforms.uPointSize.value = parseFloat(e.target.value);
+  document.getElementById('val-size').textContent = e.target.value;
+};
+document.getElementById('rng-soft').oninput = e => {
+  uniforms.uSoftness.value = parseFloat(e.target.value);
+  document.getElementById('val-soft').textContent = e.target.value;
+};
+
+let autoOrbit = true;
+const btnOrbit = document.getElementById('btn-orbit');
+btnOrbit.onclick = () => { autoOrbit = !autoOrbit; btnOrbit.classList.toggle('active', autoOrbit); };
+
+const btnInvert = document.getElementById('btn-invert');
+btnInvert.onclick = () => {
+  uniforms.uInvert.value = uniforms.uInvert.value > 0.5 ? 0.0 : 1.0;
+  btnInvert.classList.toggle('active', uniforms.uInvert.value > 0.5);
+};
+
+document.getElementById('btn-reset').onclick = () => {
+  camera.position.set(0, 0, 3.2);
+  controls.target.set(0, 0, 0);
+};
+
+let clock = new THREE.Clock();
+function animate() {
+  requestAnimationFrame(animate);
+  const t = clock.getElapsedTime();
+  if (autoOrbit && splatPoints) {
+    splatPoints.rotation.y = Math.sin(t * 0.6) * 0.22;
+    splatPoints.rotation.x = Math.cos(t * 0.4) * 0.08;
+  }
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+window.onresize = () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+};
+</script>
+</body>
+</html>
