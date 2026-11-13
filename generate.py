@@ -2,6 +2,7 @@ import os
 import zlib
 import struct
 import math
+import shutil
 
 # 1. Корневой build.gradle.kts
 with open("build.gradle.kts", "w", encoding="utf-8") as f:
@@ -31,7 +32,7 @@ rootProject.name = "WordClock"
 include(":app")
 """)
 
-# 3. app/build.gradle.kts (applicationId = wb.illuminator.wordclock, как у рабочего пакета)
+# 3. app/build.gradle.kts
 os.makedirs("app", exist_ok=True)
 with open("app/build.gradle.kts", "w", encoding="utf-8") as f:
     f.write("""plugins {
@@ -88,13 +89,18 @@ dependencies {
 }
 """)
 
-# 4. Папки ресурсов
+# 4. Папки ресурсов и копирование шрифта и в assets, и в res/font
 os.makedirs("app/src/main/res/xml", exist_ok=True)
+os.makedirs("app/src/main/res/font", exist_ok=True)
 os.makedirs("app/src/main/res/drawable-nodpi", exist_ok=True)
 os.makedirs("app/src/main/assets", exist_ok=True)
 os.makedirs("app/src/main/java/com/samsung/android/wearable/watchfacestudio/editor", exist_ok=True)
+os.makedirs("app/src/main/java/com/samsung/watchface/debug", exist_ok=True)
 
-# 5. Полная побайтовая копия AndroidManifest.xml от рабочего wb.illuminator.two
+if os.path.exists("app/src/main/assets/minecraft.ttf"):
+    shutil.copy("app/src/main/assets/minecraft.ttf", "app/src/main/res/font/minecraft.ttf")
+
+# 5. Полная побайтовая копия AndroidManifest.xml от рабочего wb.illuminator.two (включая DebugBroadcastReceiver)
 with open("app/src/main/AndroidManifest.xml", "w", encoding="utf-8") as f:
     f.write("""<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -139,6 +145,7 @@ with open("app/src/main/AndroidManifest.xml", "w", encoding="utf-8") as f:
         <activity
             android:name="com.samsung.android.wearable.watchfacestudio.editor.EditorActivity"
             android:exported="true"
+            android:excludeFromRecents="true"
             android:label="Config Activity"
             android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
             <intent-filter>
@@ -147,6 +154,14 @@ with open("app/src/main/AndroidManifest.xml", "w", encoding="utf-8") as f:
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
+
+        <receiver
+            android:name="com.samsung.watchface.debug.DebugBroadcastReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.samsung.watchface.DEBUG_WATCH_FACE" />
+            </intent-filter>
+        </receiver>
 
         <service
             android:name="com.samsung.android.wearable.watchfacestudio.WatchFaceStudioRuntime"
@@ -208,7 +223,7 @@ with open("app/src/main/AndroidManifest.xml", "w", encoding="utf-8") as f:
 </manifest>
 """)
 
-# 6. res/xml/watch_face.xml и res/xml/watchface.xml (который проверяет лаунчер OnePlus!)
+# 6. res/xml/watch_face.xml и полноценный res/xml/watchface.xml (по схеме 1.1.1 из дампа wb.illuminator.two)
 with open("app/src/main/res/xml/watch_face.xml", "w", encoding="utf-8") as f:
     f.write("""<?xml version="1.0" encoding="utf-8"?>
 <wallpaper xmlns:android="http://schemas.android.com/apk/res/android" />
@@ -216,22 +231,31 @@ with open("app/src/main/res/xml/watch_face.xml", "w", encoding="utf-8") as f:
 
 with open("app/src/main/res/xml/watchface.xml", "w", encoding="utf-8") as f:
     f.write("""<?xml version="1.0" encoding="utf-8"?>
-<WatchFace width="450" height="450" version="1.1.1">
+<Watchface width="450" height="450" schemeVersion="1.1.1">
     <Metadata key="CLOCK_TYPE" value="DIGITAL" />
     <Metadata key="PREVIEW_TIME" value="10:08:32" />
-    <Scene backgroundColor="#ff000000">
+    <Scene backgroundColor="#ff000000" ambientBackgroundColor="#ff000000">
+        <Group name="RootGroup" x="0" y="0" width="450" height="450" alpha="255" alphaAmbient="255">
+            <PartText name="TimeText" x="75" y="180" width="320" height="100" alpha="255" alphaAmbient="255">
+                <Text align="START" ellipsis="false">
+                    <Font family="minecraft" size="38" color="#ffffffff" weight="NORMAL">
+                        <Template>%s<Parameter expression="[HOUR_0_23]" /></Template>
+                    </Font>
+                </Text>
+            </PartText>
+        </Group>
     </Scene>
-</WatchFace>
+</Watchface>
 """)
 
-# 7. Генерация растрового preview_circular.png (400x400) в drawable-nodpi
-w, h = 400, 400
+# 7. Генерация растрового preview_circular.png (450x450) в drawable-nodpi
+w, h = 450, 450
 raw = bytearray()
 for y in range(h):
     raw.append(0)
     for x in range(w):
-        d = math.hypot(x - 200, y - 200)
-        c = 255 if (180 <= d <= 192) else 0
+        d = math.hypot(x - 225, y - 225)
+        c = 255 if (200 <= d <= 212) else 0
         raw.extend((c, c, c, 255))
 
 def chunk(t, d):
@@ -484,7 +508,7 @@ class WordCanvasRenderer(
 }
 """)
 
-# 9. EditorActivity.kt
+# 9. EditorActivity.kt и DebugBroadcastReceiver.kt (чтобы все компоненты из манифеста wb.illuminator.two существовали)
 with open("app/src/main/java/com/samsung/android/wearable/watchfacestudio/editor/EditorActivity.kt", "w", encoding="utf-8") as f:
     f.write("""package com.samsung.android.wearable.watchfacestudio.editor
 
@@ -496,5 +520,17 @@ class EditorActivity : Activity() {
         super.onCreate(savedInstanceState)
         finish()
     }
+}
+""")
+
+with open("app/src/main/java/com/samsung/watchface/debug/DebugBroadcastReceiver.kt", "w", encoding="utf-8") as f:
+    f.write("""package com.samsung.watchface.debug
+
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+
+class DebugBroadcastReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context?, intent: Intent?) {}
 }
 """)
