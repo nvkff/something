@@ -31,7 +31,7 @@ rootProject.name = "WordClock"
 include(":app")
 """)
 
-# 3. app/build.gradle.kts
+# 3. app/build.gradle.kts (applicationId = wb.illuminator.wordclock, как у рабочего пакета)
 os.makedirs("app", exist_ok=True)
 with open("app/build.gradle.kts", "w", encoding="utf-8") as f:
     f.write("""plugins {
@@ -40,11 +40,11 @@ with open("app/build.gradle.kts", "w", encoding="utf-8") as f:
 }
 
 android {
-    namespace = "com.example.wordclock"
+    namespace = "wb.illuminator.wordclock"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.example.wordclock"
+        applicationId = "wb.illuminator.wordclock"
         minSdk = 28
         targetSdk = 30
         versionCode = 1
@@ -88,12 +88,13 @@ dependencies {
 }
 """)
 
-# 4. Папки и AndroidManifest.xml (с точным именем класса WatchFaceStudioRuntime как в wb.illuminator.two)
+# 4. Папки ресурсов
 os.makedirs("app/src/main/res/xml", exist_ok=True)
-os.makedirs("app/src/main/res/drawable", exist_ok=True)
+os.makedirs("app/src/main/res/drawable-nodpi", exist_ok=True)
 os.makedirs("app/src/main/assets", exist_ok=True)
-os.makedirs("app/src/main/java/com/samsung/android/wearable/watchfacestudio", exist_ok=True)
+os.makedirs("app/src/main/java/com/samsung/android/wearable/watchfacestudio/editor", exist_ok=True)
 
+# 5. Полная побайтовая копия AndroidManifest.xml от рабочего wb.illuminator.two
 with open("app/src/main/AndroidManifest.xml", "w", encoding="utf-8") as f:
     f.write("""<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -102,25 +103,44 @@ with open("app/src/main/AndroidManifest.xml", "w", encoding="utf-8") as f:
 
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.VIBRATE" />
-    <uses-permission android:name="com.google.android.permission.PROVIDE_BACKGROUND" />
     <uses-permission android:name="com.google.android.wearable.permission.BIND_WATCH_FACE_CONTROL" />
     <uses-permission android:name="com.google.android.wearable.permission.RECEIVE_COMPLICATION_DATA" />
 
+    <queries>
+        <package android:name="com.samsung.android.watch.watchface.companionhelper" />
+        <intent>
+            <action android:name="android.support.wearable.complications.ACTION_COMPLICATION_UPDATE_REQUEST" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <intent>
+            <action android:name="androidx.wear.tiles.action.BIND_UPDATE_REQUESTER" />
+        </intent>
+    </queries>
+
     <application
         android:allowBackup="true"
-        android:icon="@drawable/preview"
-        android:label="Русские часы"
+        android:extractNativeLibs="true"
+        android:icon="@drawable/preview_circular"
+        android:label="Словами"
+        android:supportsRtl="true"
         android:hasCode="true">
 
+        <uses-library
+            android:name="com.google.android.wearable"
+            android:required="false" />
+
+        <meta-data
+            android:name="com.google.android.wearable.standalone"
+            android:value="true" />
+
         <activity
-            android:name="com.samsung.android.wearable.watchfacestudio.EditorActivity"
+            android:name="com.samsung.android.wearable.watchfacestudio.editor.EditorActivity"
             android:exported="true"
-            android:label="Русские часы"
+            android:label="Config Activity"
             android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
             <intent-filter>
                 <action android:name="androidx.wear.watchface.editor.action.WATCH_FACE_EDITOR" />
                 <category android:name="com.google.android.wearable.watchface.category.WEARABLE_CONFIGURATION" />
@@ -131,6 +151,7 @@ with open("app/src/main/AndroidManifest.xml", "w", encoding="utf-8") as f:
         <service
             android:name="com.samsung.android.wearable.watchfacestudio.WatchFaceStudioRuntime"
             android:directBootAware="true"
+            android:enabled="true"
             android:exported="true"
             android:label="Словами"
             android:permission="android.permission.BIND_WALLPAPER">
@@ -146,30 +167,64 @@ with open("app/src/main/AndroidManifest.xml", "w", encoding="utf-8") as f:
                 android:name="android.service.wallpaper"
                 android:resource="@xml/watch_face" />
             <meta-data
+                android:name="android.service.wallpaper.square_mode"
+                android:value="false" />
+            <meta-data
                 android:name="com.google.android.wearable.watchface.preview"
-                android:resource="@drawable/preview" />
+                android:resource="@drawable/preview_circular" />
             <meta-data
                 android:name="com.google.android.wearable.watchface.preview_circular"
-                android:resource="@drawable/preview" />
+                android:resource="@drawable/preview_circular" />
             <meta-data
                 android:name="com.google.android.wearable.watchface.wearableConfigurationAction"
                 android:value="androidx.wear.watchface.editor.action.WATCH_FACE_EDITOR" />
             <meta-data
                 android:name="com.google.android.wearable.watchface.companionBuiltinConfigurationEnabled"
                 android:value="true" />
+            <meta-data
+                android:name="androidx.wear.watchface.MULTIPLE_INSTANCES_ALLOWED"
+                android:value="false" />
+            <meta-data
+                android:name="androidx.wear.watchface.api_version"
+                android:value="5" />
+            <meta-data
+                android:name="androidx.wear.watchface.xml_version"
+                android:value="2" />
+            <meta-data
+                android:name="com.samsung.android.watch.watchface.config.vi.launching"
+                android:value="com.samsung.android.watch.watchface.config.vi.launching.REQUIRE_PREVIEW" />
+            <meta-data
+                android:name="com.samsung.watchfacestudio.category"
+                android:value=" /> " />
+            <meta-data
+                android:name="com.samsung.watchfacestudio.version"
+                android:value="1.3.13" />
+            <meta-data
+                android:name="com.samsung.watchfacestudio.xml.version"
+                android:value="11" />
         </service>
 
     </application>
 </manifest>
 """)
 
-# 5. res/xml/watch_face.xml
+# 6. res/xml/watch_face.xml и res/xml/watchface.xml (который проверяет лаунчер OnePlus!)
 with open("app/src/main/res/xml/watch_face.xml", "w", encoding="utf-8") as f:
     f.write("""<?xml version="1.0" encoding="utf-8"?>
 <wallpaper xmlns:android="http://schemas.android.com/apk/res/android" />
 """)
 
-# 6. Генерация растрового preview.png (400x400)
+with open("app/src/main/res/xml/watchface.xml", "w", encoding="utf-8") as f:
+    f.write("""<?xml version="1.0" encoding="utf-8"?>
+<WatchFace width="450" height="450" version="1.1.1">
+    <Metadata key="CLOCK_TYPE" value="DIGITAL" />
+    <Metadata key="PREVIEW_TIME" value="10:08:32" />
+    <Scene backgroundColor="#ff000000">
+    </Scene>
+</WatchFace>
+""")
+
+# 7. Генерация растрового preview_circular.png (400x400) в drawable-nodpi
 w, h = 400, 400
 raw = bytearray()
 for y in range(h):
@@ -188,26 +243,20 @@ png = (
     + chunk(b"IDAT", zlib.compress(bytes(raw), 9))
     + chunk(b"IEND", b"")
 )
-with open("app/src/main/res/drawable/preview.png", "wb") as f:
+with open("app/src/main/res/drawable-nodpi/preview_circular.png", "wb") as f:
     f.write(png)
 
-# 7. WatchFaceStudioRuntime.kt (в пакете com.samsung.android.wearable.watchfacestudio)
+# 8. WatchFaceStudioRuntime.kt
 with open("app/src/main/java/com/samsung/android/wearable/watchfacestudio/WatchFaceStudioRuntime.kt", "w", encoding="utf-8") as f:
     f.write("""package com.samsung.android.wearable.watchfacestudio
 
-import android.app.Activity
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.Typeface
-import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.view.SurfaceHolder
-import android.view.View
-import android.view.WindowManager
 import androidx.wear.watchface.CanvasType
 import androidx.wear.watchface.ComplicationSlotsManager
 import androidx.wear.watchface.DrawMode
@@ -433,74 +482,19 @@ class WordCanvasRenderer(
         zonedDateTime: ZonedDateTime
     ) {}
 }
+""")
+
+# 9. EditorActivity.kt
+with open("app/src/main/java/com/samsung/android/wearable/watchfacestudio/editor/EditorActivity.kt", "w", encoding="utf-8") as f:
+    f.write("""package com.samsung.android.wearable.watchfacestudio.editor
+
+import android.app.Activity
+import android.os.Bundle
 
 class EditorActivity : Activity() {
-    private val handler = Handler(Looper.getMainLooper())
-    private lateinit var clockView: View
-
-    private val tickRunnable = object : Runnable {
-        override fun run() {
-            clockView.invalidate()
-            handler.postDelayed(this, 1000L)
-        }
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        clockView = object : View(this) {
-            private val pixelFont: Typeface by lazy {
-                try {
-                    Typeface.createFromAsset(assets, "minecraft.ttf")
-                } catch (e: Exception) {
-                    Typeface.MONOSPACE
-                }
-            }
-            private val pReg = Paint().apply {
-                color = Color.WHITE
-                textAlign = Paint.Align.LEFT
-                isAntiAlias = false
-            }
-            private val pBold = Paint().apply {
-                color = Color.WHITE
-                textAlign = Paint.Align.LEFT
-                isAntiAlias = false
-                isFakeBoldText = true
-            }
-
-            override fun onDraw(canvas: Canvas) {
-                super.onDraw(canvas)
-                canvas.drawColor(Color.BLACK)
-                pReg.typeface = pixelFont
-                pBold.typeface = pixelFont
-
-                val now = ZonedDateTime.now()
-                val (lines, boldIdx) = RussianTimeFormatter.format(now.hour, now.minute)
-                val fontSize = width * 0.088f
-                val lineSpacing = fontSize * 1.32f
-                pReg.textSize = fontSize
-                pBold.textSize = fontSize
-
-                val startX = width * 0.18f
-                var startY = (height / 2f) - (lines.size * lineSpacing / 2f) + fontSize * 0.8f
-
-                for (i in lines.indices) {
-                    canvas.drawText(lines[i], startX, startY, if (i == boldIdx) pBold else pReg)
-                    startY += lineSpacing
-                }
-            }
-        }
-        setContentView(clockView)
-    }
-
-    override fun onResume() {
-        super.onResume()
-        handler.post(tickRunnable)
-    }
-
-    override fun onPause() {
-        super.onPause()
-        handler.removeCallbacks(tickRunnable)
+        finish()
     }
 }
 """)
