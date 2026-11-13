@@ -3,7 +3,7 @@ import zlib
 import struct
 import math
 
-# 1. build.gradle.kts
+# 1. Корневой build.gradle.kts
 with open("build.gradle.kts", "w", encoding="utf-8") as f:
     f.write("""plugins {
     id("com.android.application") version "8.4.1" apply false
@@ -47,8 +47,8 @@ android {
         applicationId = "com.example.wordclock"
         minSdk = 28
         targetSdk = 30
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "2.0"
     }
 
     buildTypes {
@@ -86,6 +86,7 @@ with open("app/src/main/AndroidManifest.xml", "w", encoding="utf-8") as f:
 
     <uses-feature android:name="android.hardware.type.watch" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="com.google.android.permission.PROVIDE_BACKGROUND" />
 
     <application
         android:allowBackup="true"
@@ -93,28 +94,48 @@ with open("app/src/main/AndroidManifest.xml", "w", encoding="utf-8") as f:
         android:label="Русские часы"
         android:hasCode="true">
 
-        <service
-            android:name=".WordWatchFaceService"
+        <activity
+            android:name=".MainActivity"
             android:exported="true"
             android:label="Русские часы"
-            android:permission="android.permission.BIND_WALLPAPER">
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
 
+        <service
+            android:name=".WordWatchFaceService"
+            android:directBootAware="true"
+            android:exported="true"
+            android:icon="@drawable/preview"
+            android:label="Словами"
+            android:permission="android.permission.BIND_WALLPAPER">
             <intent-filter>
                 <action android:name="android.service.wallpaper.WallpaperService" />
                 <category android:name="com.google.android.wearable.watchface.category.WATCH_FACE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
             </intent-filter>
 
             <meta-data
                 android:name="android.service.wallpaper"
                 android:resource="@xml/watch_face" />
-
             <meta-data
                 android:name="com.google.android.wearable.watchface.preview"
                 android:resource="@drawable/preview" />
-
             <meta-data
                 android:name="com.google.android.wearable.watchface.preview_circular"
                 android:resource="@drawable/preview" />
+            <meta-data
+                android:name="com.google.android.wearable.watchface.wearableConfigurationAction"
+                android:value="androidx.wear.watchface.editor.action.WATCH_FACE_EDITOR" />
+            <meta-data
+                android:name="com.google.android.wearable.watchface.companionBuiltinConfigurationEnabled"
+                android:value="true" />
         </service>
 
     </application>
@@ -124,10 +145,11 @@ with open("app/src/main/AndroidManifest.xml", "w", encoding="utf-8") as f:
 # 5. res/xml/watch_face.xml
 with open("app/src/main/res/xml/watch_face.xml", "w", encoding="utf-8") as f:
     f.write("""<?xml version="1.0" encoding="utf-8"?>
-<wallpaper xmlns:android="http://schemas.android.com/apk/res/android" />
+<wallpaper xmlns:android="http://schemas.android.com/apk/res/android"
+    android:thumbnail="@drawable/preview" />
 """)
 
-# 6. preview.png
+# 6. Генерация растрового preview.png (400x400)
 w, h = 400, 400
 raw = bytearray()
 for y in range(h):
@@ -136,25 +158,39 @@ for y in range(h):
         d = math.hypot(x - 200, y - 200)
         c = 255 if (180 <= d <= 192) else 0
         raw.extend((c, c, c, 255))
+
 def chunk(t, d):
     return struct.pack("!I", len(d)) + t + d + struct.pack("!I", zlib.crc32(t + d) & 0xffffffff)
-png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack("!IIBBBBB", w, h, 8, 6, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(bytes(raw))) + chunk(b"IEND", b"")
+
+png = (
+    b"\x89PNG\r\n\x1a\n"
+    + chunk(b"IHDR", struct.pack("!IIBBBBB", w, h, 8, 6, 0, 0, 0))
+    + chunk(b"IDAT", zlib.compress(bytes(raw), 9))
+    + chunk(b"IEND", b"")
+)
 with open("app/src/main/res/drawable/preview.png", "wb") as f:
     f.write(png)
 
-# 7. WordWatchFaceService.kt
+# 7. WordWatchFaceService.kt + MainActivity.kt (полная логика всех 60 минут + AOD)
 with open("app/src/main/java/com/example/wordclock/WordWatchFaceService.kt", "w", encoding="utf-8") as f:
     f.write("""package com.example.wordclock
 
+import android.app.Activity
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.Typeface
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.SurfaceHolder
+import android.view.View
+import android.view.WindowManager
 import androidx.wear.watchface.CanvasType
 import androidx.wear.watchface.ComplicationSlotsManager
+import androidx.wear.watchface.DrawMode
 import androidx.wear.watchface.Renderer
 import androidx.wear.watchface.WatchFace
 import androidx.wear.watchface.WatchFaceService
@@ -163,8 +199,118 @@ import androidx.wear.watchface.WatchState
 import androidx.wear.watchface.style.CurrentUserStyleRepository
 import java.time.ZonedDateTime
 
-class WordWatchFaceService : WatchFaceService() {
+object RussianTimeFormatter {
+    private val nom = listOf(
+        "", "один", "два", "три", "четыре", "пять",
+        "шесть", "семь", "восемь", "девять", "десять", "одиннадцать", "двенадцать"
+    )
+    private val gen = listOf(
+        "", "первого", "второго", "третьего", "четвертого", "пятого",
+        "шестого", "седьмого", "восьмого", "девятого", "десятого", "одиннадцатого", "двенадцатого"
+    )
 
+    fun format(hour: Int, minute: Int): Pair<List<String>, Int> {
+        val h12 = if (hour % 12 == 0) 12 else hour % 12
+        val nextH = if ((hour + 1) % 12 == 0) 12 else (hour + 1) % 12
+        val tod = when (hour) {
+            in 4..11 -> "утра"
+            in 12..16 -> "дня"
+            in 17..22 -> "вечера"
+            else -> "ночи"
+        }
+
+        return when {
+            minute == 0 -> {
+                val lines = when (h12) {
+                    1 -> listOf("час", tod)
+                    in 2..4 -> listOf(nom[h12], "часа", tod)
+                    else -> listOf(nom[h12], "часов", tod)
+                }
+                Pair(lines, 0) // жирным выделяется первая строка (сам час)
+            }
+            minute == 15 -> Pair(listOf("четверть", gen[nextH]), 1)
+            minute == 30 -> Pair(listOf("половина", gen[nextH]), 1)
+            minute == 45 -> Pair(listOf("без", "четверти", nom[nextH]), 2)
+            minute == 35 -> Pair(listOf("без", "двадцати", "пяти", nom[nextH]), 3)
+            minute in 31..39 -> {
+                val mWords = when (minute) {
+                    31 -> listOf("тридцать", "одна")
+                    32 -> listOf("тридцать", "две")
+                    33 -> listOf("тридцать", "три")
+                    34 -> listOf("тридцать", "четыре")
+                    36 -> listOf("тридцать", "шесть")
+                    37 -> listOf("тридцать", "семь")
+                    38 -> listOf("тридцать", "восемь")
+                    else -> listOf("тридцать", "девять")
+                }
+                val lines = listOf(nom[h12]) + mWords
+                Pair(lines, 0) // жирным выделяется первая строка (сам час)
+            }
+            minute < 30 -> {
+                val mWords = when (minute) {
+                    1 -> listOf("одна", "минута")
+                    2 -> listOf("две", "минуты")
+                    3 -> listOf("три", "минуты")
+                    4 -> listOf("четыре", "минуты")
+                    5 -> listOf("пять", "минут")
+                    6 -> listOf("шесть", "минут")
+                    7 -> listOf("семь", "минут")
+                    8 -> listOf("восемь", "минут")
+                    9 -> listOf("девять", "минут")
+                    10 -> listOf("десять", "минут")
+                    11 -> listOf("одиннадцать", "минут")
+                    12 -> listOf("двенадцать", "минут")
+                    13 -> listOf("тринадцать", "минут")
+                    14 -> listOf("четырнадцать", "минут")
+                    16 -> listOf("шестнадцать", "минут")
+                    17 -> listOf("семнадцать", "минут")
+                    18 -> listOf("восем", "надцать", "минут")
+                    19 -> listOf("девят", "надцать", "минут")
+                    20 -> listOf("двадцать", "минут")
+                    21 -> listOf("двадцать", "одна", "минута")
+                    22 -> listOf("двадцать", "две", "минуты")
+                    23 -> listOf("двадцать", "три", "минуты")
+                    24 -> listOf("двадцать", "четыре", "минуты")
+                    25 -> listOf("двадцать", "пять", "минут")
+                    26 -> listOf("двадцать", "шесть", "минут")
+                    27 -> listOf("двадцать", "семь", "минут")
+                    28 -> listOf("двадцать", "восемь", "минут")
+                    else -> listOf("двадцать", "девять", "минут")
+                }
+                val lines = mWords + listOf(gen[nextH])
+                Pair(lines, lines.lastIndex)
+            }
+            else -> {
+                val left = 60 - minute
+                val leftWords = when (left) {
+                    1 -> listOf("без", "одной", "минуты")
+                    2 -> listOf("без", "двух", "минут")
+                    3 -> listOf("без", "трех", "минут")
+                    4 -> listOf("без", "четырех", "минут")
+                    5 -> listOf("без", "пяти")
+                    6 -> listOf("без", "шести")
+                    7 -> listOf("без", "семи")
+                    8 -> listOf("без", "восьми")
+                    9 -> listOf("без", "девяти")
+                    10 -> listOf("без", "десяти")
+                    11 -> listOf("без", "один", "надцати")
+                    12 -> listOf("без", "две", "надцати")
+                    13 -> listOf("без", "три", "надцати")
+                    14 -> listOf("без", "четыр", "надцати")
+                    16 -> listOf("без", "шест", "надцати")
+                    17 -> listOf("без", "сем", "надцати")
+                    18 -> listOf("без", "восем", "надцати")
+                    19 -> listOf("без", "девят", "надцати")
+                    else -> listOf("без", "двадцати")
+                }
+                val lines = leftWords + listOf(nom[nextH])
+                Pair(lines, lines.lastIndex)
+            }
+        }
+    }
+}
+
+class WordWatchFaceService : WatchFaceService() {
     override suspend fun createWatchFace(
         surfaceHolder: SurfaceHolder,
         watchState: WatchState,
@@ -196,15 +342,25 @@ class WordCanvasRenderer(
     canvasType = CanvasType.HARDWARE,
     interactiveDrawModeUpdateDelayMillis = 1000L
 ) {
-    private val textPaint = Paint().apply {
-        isAntiAlias = true
-        color = Color.WHITE
-        textSize = 36f
+    private val pixelFont: Typeface by lazy {
         try {
-            typeface = Typeface.createFromAsset(context.assets, "minecraft.ttf")
+            Typeface.createFromAsset(context.assets, "minecraft.ttf")
         } catch (e: Exception) {
-            typeface = Typeface.MONOSPACE
+            Typeface.MONOSPACE
         }
+    }
+
+    private val paintRegular = Paint().apply {
+        color = Color.WHITE
+        textAlign = Paint.Align.LEFT
+        isAntiAlias = false
+    }
+
+    private val paintBold = Paint().apply {
+        color = Color.WHITE
+        textAlign = Paint.Align.LEFT
+        isAntiAlias = false
+        isFakeBoldText = true
     }
 
     override fun render(
@@ -212,18 +368,42 @@ class WordCanvasRenderer(
         bounds: Rect,
         zonedDateTime: ZonedDateTime
     ) {
+        val isAmbient = renderParameters.drawMode == DrawMode.AMBIENT
         canvas.drawColor(Color.BLACK)
-        val hour = zonedDateTime.hour
-        val minute = zonedDateTime.minute
-        val lines = getRussianTime(hour, minute)
 
-        val n = lines.size
-        val startY = if (n == 2) 180f else if (n == 3) 145f else 120f
-        val step = if (n == 2) 56f else if (n == 3) 54f else 52f
+        paintRegular.typeface = pixelFont
+        paintBold.typeface = pixelFont
 
-        lines.forEachIndexed { i, line ->
-            val y = startY + i * step
-            canvas.drawText(line, 75f, y, textPaint)
+        if (isAmbient) {
+            paintRegular.style = Paint.Style.STROKE
+            paintRegular.strokeWidth = bounds.width() * 0.005f
+            paintRegular.isFakeBoldText = false
+
+            paintBold.style = Paint.Style.STROKE
+            paintBold.strokeWidth = bounds.width() * 0.011f
+            paintBold.isFakeBoldText = false
+        } else {
+            paintRegular.style = Paint.Style.FILL
+            paintRegular.isFakeBoldText = false
+
+            paintBold.style = Paint.Style.FILL
+            paintBold.isFakeBoldText = true
+        }
+
+        val (lines, boldIndex) = RussianTimeFormatter.format(zonedDateTime.hour, zonedDateTime.minute)
+        val fontSize = bounds.width() * 0.088f
+        val lineSpacing = fontSize * 1.32f
+
+        paintRegular.textSize = fontSize
+        paintBold.textSize = fontSize
+
+        val startX = bounds.left + bounds.width() * 0.18f
+        var startY = bounds.centerY() - (lines.size * lineSpacing / 2f) + fontSize * 0.8f
+
+        for (i in lines.indices) {
+            val p = if (i == boldIndex) paintBold else paintRegular
+            canvas.drawText(lines[i], startX, startY, p)
+            startY += lineSpacing
         }
     }
 
@@ -231,70 +411,76 @@ class WordCanvasRenderer(
         canvas: Canvas,
         bounds: Rect,
         zonedDateTime: ZonedDateTime
-    ) {
+    ) {}
+}
+
+class MainActivity : Activity() {
+    private val handler = Handler(Looper.getMainLooper())
+    private lateinit var clockView: View
+
+    private val tickRunnable = object : Runnable {
+        override fun run() {
+            clockView.invalidate()
+            handler.postDelayed(this, 1000L)
+        }
     }
 
-    private fun getRussianTime(hour: Int, minute: Int): List<String> {
-        val h12 = if (hour % 12 == 0) 12 else hour % 12
-        val nextH = if ((hour + 1) % 12 == 0) 12 else (hour + 1) % 12
-        val nom = listOf("", "один", "два", "три", "четыре", "пять", "шесть", "семь", "восемь", "девять", "десять", "одиннадцать", "двенадцать")
-        val gen = listOf("", "первого", "второго", "третьего", "четвертого", "пятого", "шестого", "седьмого", "восьмого", "девятого", "десятого", "одиннадцатого", "двенадцатого")
-        val tod = if (hour in 4..11) "утра" else if (hour in 12..16) "дня" else if (hour in 17..22) "вечера" else "ночи"
-
-        return when {
-            minute == 0 -> {
-                when (h12) {
-                    1 -> listOf("час", tod)
-                    in 2..4 -> listOf(nom[h12], "часа", tod)
-                    else -> listOf(nom[h12], "часов", tod)
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        clockView = object : View(this) {
+            private val pixelFont: Typeface by lazy {
+                try {
+                    Typeface.createFromAsset(assets, "minecraft.ttf")
+                } catch (e: Exception) {
+                    Typeface.MONOSPACE
                 }
             }
-            minute == 15 -> listOf("четверть", gen[nextH])
-            minute == 30 -> listOf("половина", gen[nextH])
-            minute == 45 -> listOf("без", "четверти", nom[nextH])
-            minute == 35 -> listOf("без", "двадцати", "пяти", nom[nextH])
-            minute in 31..39 -> {
-                val mWords = mapOf(
-                    31 to listOf("тридцать", "одна"),
-                    32 to listOf("тридцать", "две"),
-                    33 to listOf("тридцать", "три"),
-                    34 to listOf("тридцать", "четыре"),
-                    36 to listOf("тридцать", "шесть"),
-                    37 to listOf("тридцать", "семь"),
-                    38 to listOf("тридцать", "восемь"),
-                    39 to listOf("тридцать", "девять")
-                )[minute] ?: listOf()
-                listOf(nom[h12]) + mWords
+            private val pReg = Paint().apply {
+                color = Color.WHITE
+                textAlign = Paint.Align.LEFT
+                isAntiAlias = false
             }
-            minute < 30 -> {
-                val mMap = mapOf(
-                    1 to listOf("одна", "минута"), 2 to listOf("две", "минуты"), 3 to listOf("три", "минуты"),
-                    4 to listOf("четыре", "минуты"), 5 to listOf("пять", "минут"), 6 to listOf("шесть", "минут"),
-                    7 to listOf("семь", "минут"), 8 to listOf("восемь", "минут"), 9 to listOf("девять", "минут"),
-                    10 to listOf("десять", "минут"), 11 to listOf("одиннадцать", "минут"), 12 to listOf("двенадцать", "минут"),
-                    13 to listOf("тринадцать", "минут"), 14 to listOf("четырнадцать", "минут"), 16 to listOf("шестнадцать", "минут"),
-                    17 to listOf("семнадцать", "минут"), 18 to listOf("восемнадцать", "минут"), 19 to listOf("девятнадцать", "минут"),
-                    20 to listOf("двадцать", "минут"), 21 to listOf("двадцать", "одна", "минута"), 22 to listOf("двадцать", "две", "минуты"),
-                    23 to listOf("двадцать", "три", "минуты"), 24 to listOf("двадцать", "четыре", "минуты"), 25 to listOf("двадцать", "пять", "минут"),
-                    26 to listOf("двадцать", "шесть", "минут"), 27 to listOf("двадцать", "семь", "минут"), 28 to listOf("двадцать", "восемь", "минут"),
-                    29 to listOf("двадцать", "девять", "минут")
-                )[minute] ?: listOf()
-                mMap + listOf(gen[nextH])
+            private val pBold = Paint().apply {
+                color = Color.WHITE
+                textAlign = Paint.Align.LEFT
+                isAntiAlias = false
+                isFakeBoldText = true
             }
-            else -> {
-                val left = 60 - minute
-                val leftMap = mapOf(
-                    1 to listOf("без", "одной", "минуты"), 2 to listOf("без", "двух", "минут"), 3 to listOf("без", "трех", "минут"),
-                    4 to listOf("без", "четырех", "минут"), 5 to listOf("без", "пяти"), 6 to listOf("без", "шести"),
-                    7 to listOf("без", "семи"), 8 to listOf("без", "восьми"), 9 to listOf("без", "девяти"),
-                    10 to listOf("без", "десяти"), 11 to listOf("без", "одиннадцати"), 12 to listOf("двенадцати"),
-                    13 to listOf("без", "тринадцати"), 14 to listOf("без", "четырнадцати"), 16 to listOf("без", "шестнадцати"),
-                    17 to listOf("без", "семнадцати"), 18 to listOf("без", "восем", "надцати"), 19 to listOf("девятнадцати"),
-                    20 to listOf("без", "двадцати")
-                )[left] ?: listOf()
-                leftMap + listOf(nom[nextH])
+
+            override fun onDraw(canvas: Canvas) {
+                super.onDraw(canvas)
+                canvas.drawColor(Color.BLACK)
+                pReg.typeface = pixelFont
+                pBold.typeface = pixelFont
+
+                val now = ZonedDateTime.now()
+                val (lines, boldIdx) = RussianTimeFormatter.format(now.hour, now.minute)
+                val fontSize = width * 0.088f
+                val lineSpacing = fontSize * 1.32f
+                pReg.textSize = fontSize
+                pBold.textSize = fontSize
+
+                val startX = width * 0.18f
+                var startY = (height / 2f) - (lines.size * lineSpacing / 2f) + fontSize * 0.8f
+
+                for (i in lines.indices) {
+                    canvas.drawText(lines[i], startX, startY, if (i == boldIdx) pBold else pReg)
+                    startY += lineSpacing
+                }
             }
         }
+        setContentView(clockView)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        handler.post(tickRunnable)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        handler.removeCallbacks(tickRunnable)
     }
 }
 """)
