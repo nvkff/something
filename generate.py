@@ -31,7 +31,7 @@ rootProject.name = "WordClock"
 include(":app")
 """)
 
-# 3. app/build.gradle.kts (Release сборка без флага DEBUGGABLE + v1/v2/v3 подпись)
+# 3. app/build.gradle.kts
 os.makedirs("app", exist_ok=True)
 with open("app/build.gradle.kts", "w", encoding="utf-8") as f:
     f.write("""plugins {
@@ -47,8 +47,8 @@ android {
         applicationId = "com.example.wordclock"
         minSdk = 28
         targetSdk = 30
-        versionCode = 3
-        versionName = "3.0"
+        versionCode = 1
+        versionName = "1.0.0"
     }
 
     signingConfigs {
@@ -88,11 +88,11 @@ dependencies {
 }
 """)
 
-# 4. AndroidManifest.xml (Точная копия таблицы разрешений и фильтров wb.illuminator.two и banhuguangying)
+# 4. Папки и AndroidManifest.xml (с точным именем класса WatchFaceStudioRuntime как в wb.illuminator.two)
 os.makedirs("app/src/main/res/xml", exist_ok=True)
 os.makedirs("app/src/main/res/drawable", exist_ok=True)
 os.makedirs("app/src/main/assets", exist_ok=True)
-os.makedirs("app/src/main/java/com/example/wordclock", exist_ok=True)
+os.makedirs("app/src/main/java/com/samsung/android/wearable/watchfacestudio", exist_ok=True)
 
 with open("app/src/main/AndroidManifest.xml", "w", encoding="utf-8") as f:
     f.write("""<?xml version="1.0" encoding="utf-8"?>
@@ -113,7 +113,7 @@ with open("app/src/main/AndroidManifest.xml", "w", encoding="utf-8") as f:
         android:hasCode="true">
 
         <activity
-            android:name=".MainActivity"
+            android:name="com.samsung.android.wearable.watchfacestudio.EditorActivity"
             android:exported="true"
             android:label="Русские часы"
             android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
@@ -129,7 +129,7 @@ with open("app/src/main/AndroidManifest.xml", "w", encoding="utf-8") as f:
         </activity>
 
         <service
-            android:name=".WordWatchFaceService"
+            android:name="com.samsung.android.wearable.watchfacestudio.WatchFaceStudioRuntime"
             android:directBootAware="true"
             android:exported="true"
             android:label="Словами"
@@ -191,9 +191,9 @@ png = (
 with open("app/src/main/res/drawable/preview.png", "wb") as f:
     f.write(png)
 
-# 7. WordWatchFaceService.kt + MainActivity.kt
-with open("app/src/main/java/com/example/wordclock/WordWatchFaceService.kt", "w", encoding="utf-8") as f:
-    f.write("""package com.example.wordclock
+# 7. WatchFaceStudioRuntime.kt (в пакете com.samsung.android.wearable.watchfacestudio)
+with open("app/src/main/java/com/samsung/android/wearable/watchfacestudio/WatchFaceStudioRuntime.kt", "w", encoding="utf-8") as f:
+    f.write("""package com.samsung.android.wearable.watchfacestudio
 
 import android.app.Activity
 import android.content.Context
@@ -330,7 +330,7 @@ object RussianTimeFormatter {
     }
 }
 
-class WordWatchFaceService : WatchFaceService() {
+class WatchFaceStudioRuntime : WatchFaceService() {
     override suspend fun createWatchFace(
         surfaceHolder: SurfaceHolder,
         watchState: WatchState,
@@ -434,7 +434,7 @@ class WordCanvasRenderer(
     ) {}
 }
 
-class MainActivity : Activity() {
+class EditorActivity : Activity() {
     private val handler = Handler(Looper.getMainLooper())
     private lateinit var clockView: View
 
