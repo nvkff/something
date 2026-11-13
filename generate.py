@@ -31,7 +31,7 @@ rootProject.name = "WordClock"
 include(":app")
 """)
 
-# 3. app/build.gradle.kts
+# 3. app/build.gradle.kts (Release сборка без флага DEBUGGABLE + v1/v2/v3 подпись)
 os.makedirs("app", exist_ok=True)
 with open("app/build.gradle.kts", "w", encoding="utf-8") as f:
     f.write("""plugins {
@@ -47,13 +47,27 @@ android {
         applicationId = "com.example.wordclock"
         minSdk = 28
         targetSdk = 30
-        versionCode = 2
-        versionName = "2.0"
+        versionCode = 3
+        versionName = "3.0"
+    }
+
+    signingConfigs {
+        create("release") {
+            storeFile = rootProject.file("release.keystore")
+            storePassword = "123456"
+            keyAlias = "watchkey"
+            keyPassword = "123456"
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            isDebuggable = false
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 
@@ -74,7 +88,7 @@ dependencies {
 }
 """)
 
-# 4. AndroidManifest.xml
+# 4. AndroidManifest.xml (Точная копия таблицы разрешений и фильтров wb.illuminator.two и banhuguangying)
 os.makedirs("app/src/main/res/xml", exist_ok=True)
 os.makedirs("app/src/main/res/drawable", exist_ok=True)
 os.makedirs("app/src/main/assets", exist_ok=True)
@@ -85,8 +99,12 @@ with open("app/src/main/AndroidManifest.xml", "w", encoding="utf-8") as f:
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-feature android:name="android.hardware.type.watch" />
+
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="com.google.android.permission.PROVIDE_BACKGROUND" />
+    <uses-permission android:name="com.google.android.wearable.permission.BIND_WATCH_FACE_CONTROL" />
+    <uses-permission android:name="com.google.android.wearable.permission.RECEIVE_COMPLICATION_DATA" />
 
     <application
         android:allowBackup="true"
@@ -103,22 +121,25 @@ with open("app/src/main/AndroidManifest.xml", "w", encoding="utf-8") as f:
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="androidx.wear.watchface.editor.action.WATCH_FACE_EDITOR" />
+                <category android:name="com.google.android.wearable.watchface.category.WEARABLE_CONFIGURATION" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
         </activity>
 
         <service
             android:name=".WordWatchFaceService"
             android:directBootAware="true"
             android:exported="true"
-            android:icon="@drawable/preview"
             android:label="Словами"
             android:permission="android.permission.BIND_WALLPAPER">
             <intent-filter>
-                <action android:name="android.service.wallpaper.WallpaperService" />
-                <category android:name="com.google.android.wearable.watchface.category.WATCH_FACE" />
-                <category android:name="android.intent.category.DEFAULT" />
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
             </intent-filter>
             <intent-filter>
-                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.service.wallpaper.WallpaperService" />
+                <category android:name="com.google.android.wearable.watchface.category.WATCH_FACE" />
             </intent-filter>
 
             <meta-data
@@ -145,8 +166,7 @@ with open("app/src/main/AndroidManifest.xml", "w", encoding="utf-8") as f:
 # 5. res/xml/watch_face.xml
 with open("app/src/main/res/xml/watch_face.xml", "w", encoding="utf-8") as f:
     f.write("""<?xml version="1.0" encoding="utf-8"?>
-<wallpaper xmlns:android="http://schemas.android.com/apk/res/android"
-    android:thumbnail="@drawable/preview" />
+<wallpaper xmlns:android="http://schemas.android.com/apk/res/android" />
 """)
 
 # 6. Генерация растрового preview.png (400x400)
@@ -171,7 +191,7 @@ png = (
 with open("app/src/main/res/drawable/preview.png", "wb") as f:
     f.write(png)
 
-# 7. WordWatchFaceService.kt + MainActivity.kt (полная логика всех 60 минут + AOD)
+# 7. WordWatchFaceService.kt + MainActivity.kt
 with open("app/src/main/java/com/example/wordclock/WordWatchFaceService.kt", "w", encoding="utf-8") as f:
     f.write("""package com.example.wordclock
 
@@ -226,7 +246,7 @@ object RussianTimeFormatter {
                     in 2..4 -> listOf(nom[h12], "часа", tod)
                     else -> listOf(nom[h12], "часов", tod)
                 }
-                Pair(lines, 0) // жирным выделяется первая строка (сам час)
+                Pair(lines, 0)
             }
             minute == 15 -> Pair(listOf("четверть", gen[nextH]), 1)
             minute == 30 -> Pair(listOf("половина", gen[nextH]), 1)
@@ -244,7 +264,7 @@ object RussianTimeFormatter {
                     else -> listOf("тридцать", "девять")
                 }
                 val lines = listOf(nom[h12]) + mWords
-                Pair(lines, 0) // жирным выделяется первая строка (сам час)
+                Pair(lines, 0)
             }
             minute < 30 -> {
                 val mWords = when (minute) {
