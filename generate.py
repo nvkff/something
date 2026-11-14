@@ -31,7 +31,7 @@ rootProject.name = "WordClock"
 include(":app")
 """)
 
-# 3. app/build.gradle.kts (Точная копия параметров Facer: minSdk 34, targetSdk 34, v2 signing)
+# 3. app/build.gradle.kts
 os.makedirs("app", exist_ok=True)
 with open("app/build.gradle.kts", "w", encoding="utf-8") as f:
     f.write("""plugins {
@@ -46,8 +46,8 @@ android {
         applicationId = "com.jeremysteckling.facerrel.watchfacepush.wordclock"
         minSdk = 34
         targetSdk = 34
-        versionCode = 8
-        versionName = "8.0.0"
+        versionCode = 10
+        versionName = "10.0.0"
     }
 
     signingConfigs {
@@ -71,7 +71,7 @@ android {
 }
 """)
 
-# 4. Очистка старых папок и создание чистой структуры WFF
+# 4. Очистка и подготовка папок
 if os.path.exists("app/src/main/java"):
     shutil.rmtree("app/src/main/java")
 if os.path.exists("app/src/main/res"):
@@ -94,7 +94,7 @@ with open("app/src/main/res/values/strings.xml", "w", encoding="utf-8") as f:
 </resources>
 """)
 
-# 6. AndroidManifest.xml (100% копия дампа Facer)
+# 6. AndroidManifest.xml
 with open("app/src/main/AndroidManifest.xml", "w", encoding="utf-8") as f:
     f.write("""<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -147,23 +147,51 @@ png = (
 with open("app/src/main/res/drawable/preview.png", "wb") as f:
     f.write(png)
 
-# 9. Генерация res/raw/watchface.xml БЕЗ разбивки слов
-nom = ["", "один", "два", "три", "четыре", "пять", "шесть", "семь", "восемь", "девять", "десять", "одиннадцать", "двенадцать"]
+# 9. Генерация res/raw/watchface.xml (выравнивание по ПРАВОЙ стенке align="END")
+nom = ["", "час", "два", "три", "четыре", "пять", "шесть", "семь", "восемь", "девять", "десять", "одиннадцать", "двенадцать"]
 gen = ["", "первого", "второго", "третьего", "четвертого", "пятого", "шестого", "седьмого", "восьмого", "девятого", "десятого", "одиннадцатого", "двенадцатого"]
 
 def make_part_text(line, y, is_bold):
-    w_attr = ' weight="BOLD"' if is_bold else ' weight="NORMAL"'
-    return f"""                <PartText x="55" y="{y}" width="350" height="48">
-                    <Variant mode="AMBIENT" target="alpha" value="180" />
-                    <Text align="START">
-                        <Font family="minecraft" size="32"{w_attr} color="#ffffffff">{line}</Font>
+    # Поле начинается на x=22 и имеет ширину 350 -> правая стенка стоит ровно на 22 + 350 = 372px (отступ 78px справа)
+    x_pos = 22
+    box_w = 350
+    font_size = 35
+    parts = []
+    
+    # 1. Основной слой для активного экрана (в AOD гаснет alpha=0)
+    parts.append(f"""                <PartText x="{x_pos}" y="{y}" width="{box_w}" height="52" alpha="255">
+                    <Variant mode="AMBIENT" target="alpha" value="0" />
+                    <Text align="END">
+                        <Font family="minecraft" size="{font_size}" color="#ffffffff">{line}</Font>
                     </Text>
-                </PartText>"""
+                </PartText>""")
+    
+    # Если строка жирная (сам час) — дублируем со сдвигом на 2px влево для чистого пиксельного Bold
+    if is_bold:
+        parts.append(f"""                <PartText x="{x_pos - 2}" y="{y}" width="{box_w}" height="52" alpha="255">
+                    <Variant mode="AMBIENT" target="alpha" value="0" />
+                    <Text align="END">
+                        <Font family="minecraft" size="{font_size}" color="#ffffffff">{line}</Font>
+                    </Text>
+                </PartText>""")
+
+    # 2. Контурный слой (только белая рамка вокруг букв) для режима AOD!
+    outline_w = 2 if is_bold else 1
+    parts.append(f"""                <PartText x="{x_pos}" y="{y}" width="{box_w}" height="52" alpha="0">
+                    <Variant mode="AMBIENT" target="alpha" value="255" />
+                    <Text align="END">
+                        <Font family="minecraft" size="{font_size}" color="#00000000">
+                            <Outline color="#ffffffff" width="{outline_w}">{line}</Outline>
+                        </Font>
+                    </Text>
+                </PartText>""")
+    
+    return "\n".join(parts)
 
 def make_group(lines, bold_idx):
     n = len(lines)
-    start_y = 180 if n == 2 else (150 if n == 3 else 120)
-    step = 48
+    start_y = 176 if n == 2 else (146 if n == 3 else 116)
+    step = 50
     parts = [make_part_text(lines[i], start_y + i * step, i == bold_idx) for i in range(n)]
     return '            <Group x="0" y="0" width="450" height="450">\n' + "\n".join(parts) + '\n            </Group>'
 
@@ -184,7 +212,7 @@ for h in range(24):
     expressions.append(f'                <Expression name="{name}">([MINUTE] == 0) &amp;&amp; ([HOUR_0_23] == {h})</Expression>')
     compares.append(f'            <Compare expression="{name}">\n{make_group(lines, 0)}\n            </Compare>')
 
-# Б) Первая половина часа (1..30 минут) — все слова цельные!
+# Б) Первая половина часа (1..30 минут)
 m_first_half = {
     1: ["одна", "минута"], 2: ["две", "минуты"], 3: ["три", "минуты"], 4: ["четыре", "минуты"],
     5: ["пять", "минут"], 6: ["шесть", "минут"], 7: ["семь", "минут"], 8: ["восемь", "минут"],
@@ -199,27 +227,27 @@ m_first_half = {
 
 for m, m_lines in m_first_half.items():
     total_n = len(m_lines) + 1
-    start_y = 180 if total_n == 2 else (150 if total_n == 3 else 120)
-    step = 48
+    start_y = 176 if total_n == 2 else (146 if total_n == 3 else 116)
+    step = 50
     parts = [make_part_text(m_lines[i], start_y + i * step, False) for i in range(len(m_lines))]
     name = f"min_{m}"
     expressions.append(f'                <Expression name="{name}">[MINUTE] == {m}</Expression>')
     compares.append(f'            <Compare expression="{name}">\n            <Group x="0" y="0" width="450" height="450">\n' + "\n".join(parts) + '\n            </Group>\n            </Compare>')
 
-# В) Прямой счёт (31..34, 36..39)
+# В) Прямой счёт (31..34, 36..39) — "час тридцать один", "два тридцать два"
 m_direct = {
-    31: ["тридцать", "одна"], 32: ["тридцать", "две"], 33: ["тридцать", "три"], 34: ["тридцать", "четыре"],
+    31: ["тридцать", "один"], 32: ["тридцать", "два"], 33: ["тридцать", "три"], 34: ["тридцать", "четыре"],
     36: ["тридцать", "шесть"], 37: ["тридцать", "семь"], 38: ["тридцать", "восемь"], 39: ["тридцать", "девять"]
 }
 for m, m_lines in m_direct.items():
-    start_y = 150
-    step = 48
+    start_y = 146
+    step = 50
     parts = [make_part_text(m_lines[i], start_y + (i + 1) * step, False) for i in range(len(m_lines))]
     name = f"min_{m}"
     expressions.append(f'                <Expression name="{name}">[MINUTE] == {m}</Expression>')
     compares.append(f'            <Compare expression="{name}">\n            <Group x="0" y="0" width="450" height="450">\n' + "\n".join(parts) + '\n            </Group>\n            </Compare>')
 
-# Г) Обратный отсчёт (35 и 40..59) — все слова цельные!
+# Г) Обратный отсчёт (35 и 40..59)
 m_second_half = {
     35: ["без", "двадцати", "пяти"], 40: ["без", "двадцати"], 41: ["без", "девятнадцати"],
     42: ["без", "восемнадцати"], 43: ["без", "семнадцати"], 44: ["без", "шестнадцати"],
@@ -231,49 +259,49 @@ m_second_half = {
 }
 for m, m_lines in m_second_half.items():
     total_n = len(m_lines) + 1
-    start_y = 180 if total_n == 2 else (150 if total_n == 3 else 120)
-    step = 48
+    start_y = 176 if total_n == 2 else (146 if total_n == 3 else 116)
+    step = 50
     parts = [make_part_text(m_lines[i], start_y + i * step, False) for i in range(len(m_lines))]
     name = f"min_{m}"
     expressions.append(f'                <Expression name="{name}">[MINUTE] == {m}</Expression>')
     compares.append(f'            <Compare expression="{name}">\n            <Group x="0" y="0" width="450" height="450">\n' + "\n".join(parts) + '\n            </Group>\n            </Compare>')
 
-# Отдельный Condition для строки ЧАСА (без разбивки слов координаты стали ещё проще!)
+# Отдельный Condition для строки ЧАСА (жирный акцент + контур в AOD)
 hour_expressions = []
 hour_compares = []
 
 for h12 in range(1, 13):
     nextH = 12 if (h12 + 1) % 12 == 0 else (h12 + 1) % 12
     
-    # 1) Первая половина часа с 2 строками всего (минуты=15, 30 -> y = 180 + 48 = 228)
+    # 1) Первая половина часа с 2 строками всего (минуты=15, 30 -> y = 176 + 50 = 226)
     n1 = f"hg2_h{h12}"
     hour_expressions.append(f'                <Expression name="{n1}">([HOUR_1_12] == {h12}) &amp;&amp; (([MINUTE] == 15) || ([MINUTE] == 30))</Expression>')
-    hour_compares.append(f'            <Compare expression="{n1}">\n{make_part_text(gen[nextH], 228, True)}\n            </Compare>')
+    hour_compares.append(f'            <Compare expression="{n1}">\n            <Group x="0" y="0" width="450" height="450">\n{make_part_text(gen[nextH], 226, True)}\n            </Group>\n            </Compare>')
 
-    # 2) Первая половина часа с 3 строками всего (1..14, 16..20 -> y = 150 + 2*48 = 246)
+    # 2) Первая половина часа с 3 строками всего (1..14, 16..20 -> y = 146 + 2*50 = 246)
     n2 = f"hg3_h{h12}"
     hour_expressions.append(f'                <Expression name="{n2}">([HOUR_1_12] == {h12}) &amp;&amp; ((([MINUTE] &gt;= 1) &amp;&amp; ([MINUTE] &lt;= 14)) || (([MINUTE] &gt;= 16) &amp;&amp; ([MINUTE] &lt;= 20)))</Expression>')
-    hour_compares.append(f'            <Compare expression="{n2}">\n{make_part_text(gen[nextH], 246, True)}\n            </Compare>')
+    hour_compares.append(f'            <Compare expression="{n2}">\n            <Group x="0" y="0" width="450" height="450">\n{make_part_text(gen[nextH], 246, True)}\n            </Group>\n            </Compare>')
 
-    # 3) Первая половина часа с 4 строками всего (21..29 -> y = 120 + 3*48 = 264)
+    # 3) Первая половина часа с 4 строками всего (21..29 -> y = 116 + 3*50 = 266)
     n3 = f"hg4_h{h12}"
     hour_expressions.append(f'                <Expression name="{n3}">([HOUR_1_12] == {h12}) &amp;&amp; (([MINUTE] &gt;= 21) &amp;&amp; ([MINUTE] &lt;= 29))</Expression>')
-    hour_compares.append(f'            <Compare expression="{n3}">\n{make_part_text(gen[nextH], 264, True)}\n            </Compare>')
+    hour_compares.append(f'            <Compare expression="{n3}">\n            <Group x="0" y="0" width="450" height="450">\n{make_part_text(gen[nextH], 266, True)}\n            </Group>\n            </Compare>')
 
-    # 4) Прямой счёт (31..34, 36..39) — текущий час h12 на 1-й строке (y = 150)
+    # 4) Прямой счёт (31..34, 36..39) — текущий час h12 на 1-й строке (y = 146)
     n4 = f"hd_h{h12}"
     hour_expressions.append(f'                <Expression name="{n4}">([HOUR_1_12] == {h12}) &amp;&amp; ((([MINUTE] &gt;= 31) &amp;&amp; ([MINUTE] &lt;= 34)) || (([MINUTE] &gt;= 36) &amp;&amp; ([MINUTE] &lt;= 39)))</Expression>')
-    hour_compares.append(f'            <Compare expression="{n4}">\n{make_part_text(nom[h12], 150, True)}\n            </Compare>')
+    hour_compares.append(f'            <Compare expression="{n4}">\n            <Group x="0" y="0" width="450" height="450">\n{make_part_text(nom[h12], 146, True)}\n            </Group>\n            </Compare>')
 
-    # 5) Вторая половина часа с 3 строками всего (40..55 -> y = 150 + 2*48 = 246)
+    # 5) Вторая половина часа с 3 строками всего (40..55 -> y = 146 + 2*50 = 246)
     n5 = f"hn3_h{h12}"
     hour_expressions.append(f'                <Expression name="{n5}">([HOUR_1_12] == {h12}) &amp;&amp; (([MINUTE] &gt;= 40) &amp;&amp; ([MINUTE] &lt;= 55))</Expression>')
-    hour_compares.append(f'            <Compare expression="{n5}">\n{make_part_text(nom[nextH], 246, True)}\n            </Compare>')
+    hour_compares.append(f'            <Compare expression="{n5}">\n            <Group x="0" y="0" width="450" height="450">\n{make_part_text(nom[nextH], 246, True)}\n            </Group>\n            </Compare>')
 
-    # 6) Вторая половина часа с 4 строками всего (35, 56..59 -> y = 120 + 3*48 = 264)
+    # 6) Вторая половина часа с 4 строками всего (35, 56..59 -> y = 116 + 3*50 = 266)
     n6 = f"hn4_h{h12}"
     hour_expressions.append(f'                <Expression name="{n6}">([HOUR_1_12] == {h12}) &amp;&amp; (([MINUTE] == 35) || (([MINUTE] &gt;= 56) &amp;&amp; ([MINUTE] &lt;= 59)))</Expression>')
-    hour_compares.append(f'            <Compare expression="{n6}">\n{make_part_text(nom[nextH], 264, True)}\n            </Compare>')
+    hour_compares.append(f'            <Compare expression="{n6}">\n            <Group x="0" y="0" width="450" height="450">\n{make_part_text(nom[nextH], 266, True)}\n            </Group>\n            </Compare>')
 
 watchface_xml = f"""<?xml version="1.0" encoding="utf-8"?>
 <WatchFace width="450" height="450">
