@@ -8,7 +8,6 @@ import shutil
 with open("build.gradle.kts", "w", encoding="utf-8") as f:
     f.write("""plugins {
     id("com.android.application") version "8.4.1" apply false
-    id("org.jetbrains.kotlin.android") version "1.9.23" apply false
 }
 """)
 
@@ -32,24 +31,23 @@ rootProject.name = "WordClock"
 include(":app")
 """)
 
-# 3. app/build.gradle.kts
+# 3. app/build.gradle.kts (Точная копия параметров Facer: minSdk 34, targetSdk 34, v2 signing)
 os.makedirs("app", exist_ok=True)
 with open("app/build.gradle.kts", "w", encoding="utf-8") as f:
     f.write("""plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
 }
 
 android {
-    namespace = "wb.illuminator.wordclock"
+    namespace = "com.jeremysteckling.facerrel.watchfacepush.wordclock"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "wb.illuminator.wordclock"
-        minSdk = 28
-        targetSdk = 30
-        versionCode = 1
-        versionName = "1.0.0"
+        applicationId = "com.jeremysteckling.facerrel.watchfacepush.wordclock"
+        minSdk = 34
+        targetSdk = 34
+        versionCode = 8
+        versionName = "8.0.0"
     }
 
     signingConfigs {
@@ -60,195 +58,74 @@ android {
             keyPassword = "123456"
             enableV1Signing = true
             enableV2Signing = true
-            enableV3Signing = true
+            enableV3Signing = false
         }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            isDebuggable = false
             signingConfig = signingConfigs.getByName("release")
         }
     }
-
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
-
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-}
-
-dependencies {
-    implementation("androidx.wear.watchface:watchface:1.1.1")
-    implementation("androidx.wear.watchface:watchface-editor:1.1.1")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 }
 """)
 
-# 4. Папки ресурсов и копирование шрифта и в assets, и в res/font
+# 4. Очистка старых папок и создание чистой структуры WFF
+if os.path.exists("app/src/main/java"):
+    shutil.rmtree("app/src/main/java")
+if os.path.exists("app/src/main/res"):
+    shutil.rmtree("app/src/main/res")
+
 os.makedirs("app/src/main/res/xml", exist_ok=True)
+os.makedirs("app/src/main/res/raw", exist_ok=True)
 os.makedirs("app/src/main/res/font", exist_ok=True)
-os.makedirs("app/src/main/res/drawable-nodpi", exist_ok=True)
-os.makedirs("app/src/main/assets", exist_ok=True)
-os.makedirs("app/src/main/java/com/samsung/android/wearable/watchfacestudio/editor", exist_ok=True)
-os.makedirs("app/src/main/java/com/samsung/watchface/debug", exist_ok=True)
+os.makedirs("app/src/main/res/drawable", exist_ok=True)
+os.makedirs("app/src/main/res/values", exist_ok=True)
 
 if os.path.exists("app/src/main/assets/minecraft.ttf"):
     shutil.copy("app/src/main/assets/minecraft.ttf", "app/src/main/res/font/minecraft.ttf")
 
-# 5. Полная побайтовая копия AndroidManifest.xml от рабочего wb.illuminator.two (включая DebugBroadcastReceiver)
+# 5. res/values/strings.xml
+with open("app/src/main/res/values/strings.xml", "w", encoding="utf-8") as f:
+    f.write("""<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Словами</string>
+</resources>
+""")
+
+# 6. AndroidManifest.xml (100% копия дампа Facer)
 with open("app/src/main/AndroidManifest.xml", "w", encoding="utf-8") as f:
     f.write("""<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <uses-feature android:name="android.hardware.type.watch" />
-
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <uses-permission android:name="android.permission.VIBRATE" />
-    <uses-permission android:name="com.google.android.wearable.permission.BIND_WATCH_FACE_CONTROL" />
-    <uses-permission android:name="com.google.android.wearable.permission.RECEIVE_COMPLICATION_DATA" />
-
-    <queries>
-        <package android:name="com.samsung.android.watch.watchface.companionhelper" />
-        <intent>
-            <action android:name="android.support.wearable.complications.ACTION_COMPLICATION_UPDATE_REQUEST" />
-        </intent>
-        <intent>
-            <action android:name="android.intent.action.MAIN" />
-            <category android:name="android.intent.category.LAUNCHER" />
-        </intent>
-        <intent>
-            <action android:name="androidx.wear.tiles.action.BIND_UPDATE_REQUESTER" />
-        </intent>
-    </queries>
+    <uses-feature
+        android:name="android.hardware.type.watch"
+        android:required="true" />
 
     <application
-        android:allowBackup="true"
-        android:extractNativeLibs="true"
-        android:icon="@drawable/preview_circular"
-        android:label="Словами"
-        android:supportsRtl="true"
-        android:hasCode="true">
+        android:extractNativeLibs="false"
+        android:hasCode="false"
+        android:label="@string/app_name">
 
-        <uses-library
-            android:name="com.google.android.wearable"
-            android:required="false" />
-
-        <meta-data
-            android:name="com.google.android.wearable.standalone"
-            android:value="true" />
-
-        <activity
-            android:name="com.samsung.android.wearable.watchfacestudio.editor.EditorActivity"
-            android:exported="true"
-            android:excludeFromRecents="true"
-            android:label="Config Activity"
-            android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
-            <intent-filter>
-                <action android:name="androidx.wear.watchface.editor.action.WATCH_FACE_EDITOR" />
-                <category android:name="com.google.android.wearable.watchface.category.WEARABLE_CONFIGURATION" />
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
-        </activity>
-
-        <receiver
-            android:name="com.samsung.watchface.debug.DebugBroadcastReceiver"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="com.samsung.watchface.DEBUG_WATCH_FACE" />
-            </intent-filter>
-        </receiver>
-
-        <service
-            android:name="com.samsung.android.wearable.watchfacestudio.WatchFaceStudioRuntime"
-            android:directBootAware="true"
-            android:enabled="true"
-            android:exported="true"
-            android:label="Словами"
-            android:permission="android.permission.BIND_WALLPAPER">
-            <intent-filter>
-                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
-            </intent-filter>
-            <intent-filter>
-                <action android:name="android.service.wallpaper.WallpaperService" />
-                <category android:name="com.google.android.wearable.watchface.category.WATCH_FACE" />
-            </intent-filter>
-
-            <meta-data
-                android:name="android.service.wallpaper"
-                android:resource="@xml/watch_face" />
-            <meta-data
-                android:name="android.service.wallpaper.square_mode"
-                android:value="false" />
-            <meta-data
-                android:name="com.google.android.wearable.watchface.preview"
-                android:resource="@drawable/preview_circular" />
-            <meta-data
-                android:name="com.google.android.wearable.watchface.preview_circular"
-                android:resource="@drawable/preview_circular" />
-            <meta-data
-                android:name="com.google.android.wearable.watchface.wearableConfigurationAction"
-                android:value="androidx.wear.watchface.editor.action.WATCH_FACE_EDITOR" />
-            <meta-data
-                android:name="com.google.android.wearable.watchface.companionBuiltinConfigurationEnabled"
-                android:value="true" />
-            <meta-data
-                android:name="androidx.wear.watchface.MULTIPLE_INSTANCES_ALLOWED"
-                android:value="false" />
-            <meta-data
-                android:name="androidx.wear.watchface.api_version"
-                android:value="5" />
-            <meta-data
-                android:name="androidx.wear.watchface.xml_version"
-                android:value="2" />
-            <meta-data
-                android:name="com.samsung.android.watch.watchface.config.vi.launching"
-                android:value="com.samsung.android.watch.watchface.config.vi.launching.REQUIRE_PREVIEW" />
-            <meta-data
-                android:name="com.samsung.watchfacestudio.category"
-                android:value=" /> " />
-            <meta-data
-                android:name="com.samsung.watchfacestudio.version"
-                android:value="1.3.13" />
-            <meta-data
-                android:name="com.samsung.watchfacestudio.xml.version"
-                android:value="11" />
-        </service>
+        <property
+            android:name="com.google.wear.watchface.format.version"
+            android:value="1" />
 
     </application>
 </manifest>
 """)
 
-# 6. res/xml/watch_face.xml и полноценный res/xml/watchface.xml (по схеме 1.1.1 из дампа wb.illuminator.two)
-with open("app/src/main/res/xml/watch_face.xml", "w", encoding="utf-8") as f:
+# 7. res/xml/watch_face_info.xml
+with open("app/src/main/res/xml/watch_face_info.xml", "w", encoding="utf-8") as f:
     f.write("""<?xml version="1.0" encoding="utf-8"?>
-<wallpaper xmlns:android="http://schemas.android.com/apk/res/android" />
+<WatchFaceInfo>
+    <Preview value="@drawable/preview" />
+    <Editable value="false" />
+</WatchFaceInfo>
 """)
 
-with open("app/src/main/res/xml/watchface.xml", "w", encoding="utf-8") as f:
-    f.write("""<?xml version="1.0" encoding="utf-8"?>
-<Watchface width="450" height="450" schemeVersion="1.1.1">
-    <Metadata key="CLOCK_TYPE" value="DIGITAL" />
-    <Metadata key="PREVIEW_TIME" value="10:08:32" />
-    <Scene backgroundColor="#ff000000" ambientBackgroundColor="#ff000000">
-        <Group name="RootGroup" x="0" y="0" width="450" height="450" alpha="255" alphaAmbient="255">
-            <PartText name="TimeText" x="75" y="180" width="320" height="100" alpha="255" alphaAmbient="255">
-                <Text align="START" ellipsis="false">
-                    <Font family="minecraft" size="38" color="#ffffffff" weight="NORMAL">
-                        <Template>%s<Parameter expression="[HOUR_0_23]" /></Template>
-                    </Font>
-                </Text>
-            </PartText>
-        </Group>
-    </Scene>
-</Watchface>
-""")
-
-# 7. Генерация растрового preview_circular.png (450x450) в drawable-nodpi
+# 8. Генерация растрового preview.png (450x450)
 w, h = 450, 450
 raw = bytearray()
 for y in range(h):
@@ -267,270 +144,157 @@ png = (
     + chunk(b"IDAT", zlib.compress(bytes(raw), 9))
     + chunk(b"IEND", b"")
 )
-with open("app/src/main/res/drawable-nodpi/preview_circular.png", "wb") as f:
+with open("app/src/main/res/drawable/preview.png", "wb") as f:
     f.write(png)
 
-# 8. WatchFaceStudioRuntime.kt
-with open("app/src/main/java/com/samsung/android/wearable/watchfacestudio/WatchFaceStudioRuntime.kt", "w", encoding="utf-8") as f:
-    f.write("""package com.samsung.android.wearable.watchfacestudio
+# 9. Генерация res/raw/watchface.xml БЕЗ разбивки слов
+nom = ["", "один", "два", "три", "четыре", "пять", "шесть", "семь", "восемь", "девять", "десять", "одиннадцать", "двенадцать"]
+gen = ["", "первого", "второго", "третьего", "четвертого", "пятого", "шестого", "седьмого", "восьмого", "девятого", "десятого", "одиннадцатого", "двенадцатого"]
 
-import android.content.Context
-import android.graphics.Canvas
-import android.graphics.Color
-import android.graphics.Paint
-import android.graphics.Rect
-import android.graphics.Typeface
-import android.view.SurfaceHolder
-import androidx.wear.watchface.CanvasType
-import androidx.wear.watchface.ComplicationSlotsManager
-import androidx.wear.watchface.DrawMode
-import androidx.wear.watchface.Renderer
-import androidx.wear.watchface.WatchFace
-import androidx.wear.watchface.WatchFaceService
-import androidx.wear.watchface.WatchFaceType
-import androidx.wear.watchface.WatchState
-import androidx.wear.watchface.style.CurrentUserStyleRepository
-import java.time.ZonedDateTime
+def make_part_text(line, y, is_bold):
+    w_attr = ' weight="BOLD"' if is_bold else ' weight="NORMAL"'
+    return f"""                <PartText x="55" y="{y}" width="350" height="48">
+                    <Variant mode="AMBIENT" target="alpha" value="180" />
+                    <Text align="START">
+                        <Font family="minecraft" size="32"{w_attr} color="#ffffffff">{line}</Font>
+                    </Text>
+                </PartText>"""
 
-object RussianTimeFormatter {
-    private val nom = listOf(
-        "", "один", "два", "три", "четыре", "пять",
-        "шесть", "семь", "восемь", "девять", "десять", "одиннадцать", "двенадцать"
-    )
-    private val gen = listOf(
-        "", "первого", "второго", "третьего", "четвертого", "пятого",
-        "шестого", "седьмого", "восьмого", "девятого", "десятого", "одиннадцатого", "двенадцатого"
-    )
+def make_group(lines, bold_idx):
+    n = len(lines)
+    start_y = 180 if n == 2 else (150 if n == 3 else 120)
+    step = 48
+    parts = [make_part_text(lines[i], start_y + i * step, i == bold_idx) for i in range(n)]
+    return '            <Group x="0" y="0" width="450" height="450">\n' + "\n".join(parts) + '\n            </Group>'
 
-    fun format(hour: Int, minute: Int): Pair<List<String>, Int> {
-        val h12 = if (hour % 12 == 0) 12 else hour % 12
-        val nextH = if ((hour + 1) % 12 == 0) 12 else (hour + 1) % 12
-        val tod = when (hour) {
-            in 4..11 -> "утра"
-            in 12..16 -> "дня"
-            in 17..22 -> "вечера"
-            else -> "ночи"
-        }
+expressions = []
+compares = []
 
-        return when {
-            minute == 0 -> {
-                val lines = when (h12) {
-                    1 -> listOf("час", tod)
-                    in 2..4 -> listOf(nom[h12], "часа", tod)
-                    else -> listOf(nom[h12], "часов", tod)
-                }
-                Pair(lines, 0)
-            }
-            minute == 15 -> Pair(listOf("четверть", gen[nextH]), 1)
-            minute == 30 -> Pair(listOf("половина", gen[nextH]), 1)
-            minute == 45 -> Pair(listOf("без", "четверти", nom[nextH]), 2)
-            minute == 35 -> Pair(listOf("без", "двадцати", "пяти", nom[nextH]), 3)
-            minute in 31..39 -> {
-                val mWords = when (minute) {
-                    31 -> listOf("тридцать", "одна")
-                    32 -> listOf("тридцать", "две")
-                    33 -> listOf("тридцать", "три")
-                    34 -> listOf("тридцать", "четыре")
-                    36 -> listOf("тридцать", "шесть")
-                    37 -> listOf("тридцать", "семь")
-                    38 -> listOf("тридцать", "восемь")
-                    else -> listOf("тридцать", "девять")
-                }
-                val lines = listOf(nom[h12]) + mWords
-                Pair(lines, 0)
-            }
-            minute < 30 -> {
-                val mWords = when (minute) {
-                    1 -> listOf("одна", "минута")
-                    2 -> listOf("две", "минуты")
-                    3 -> listOf("три", "минуты")
-                    4 -> listOf("четыре", "минуты")
-                    5 -> listOf("пять", "минут")
-                    6 -> listOf("шесть", "минут")
-                    7 -> listOf("семь", "минут")
-                    8 -> listOf("восемь", "минут")
-                    9 -> listOf("девять", "минут")
-                    10 -> listOf("десять", "минут")
-                    11 -> listOf("одиннадцать", "минут")
-                    12 -> listOf("двенадцать", "минут")
-                    13 -> listOf("тринадцать", "минут")
-                    14 -> listOf("четырнадцать", "минут")
-                    16 -> listOf("шестнадцать", "минут")
-                    17 -> listOf("семнадцать", "минут")
-                    18 -> listOf("восем", "надцать", "минут")
-                    19 -> listOf("девят", "надцать", "минут")
-                    20 -> listOf("двадцать", "минут")
-                    21 -> listOf("двадцать", "одна", "минута")
-                    22 -> listOf("двадцать", "две", "минуты")
-                    23 -> listOf("двадцать", "три", "минуты")
-                    24 -> listOf("двадцать", "четыре", "минуты")
-                    25 -> listOf("двадцать", "пять", "минут")
-                    26 -> listOf("двадцать", "шесть", "минут")
-                    27 -> listOf("двадцать", "семь", "минут")
-                    28 -> listOf("двадцать", "восемь", "минут")
-                    else -> listOf("двадцать", "девять", "минут")
-                }
-                val lines = mWords + listOf(gen[nextH])
-                Pair(lines, lines.lastIndex)
-            }
-            else -> {
-                val left = 60 - minute
-                val leftWords = when (left) {
-                    1 -> listOf("без", "одной", "минуты")
-                    2 -> listOf("без", "двух", "минут")
-                    3 -> listOf("без", "трех", "минут")
-                    4 -> listOf("без", "четырех", "минут")
-                    5 -> listOf("без", "пяти")
-                    6 -> listOf("без", "шести")
-                    7 -> listOf("без", "семи")
-                    8 -> listOf("без", "восьми")
-                    9 -> listOf("без", "девяти")
-                    10 -> listOf("без", "десяти")
-                    11 -> listOf("без", "один", "надцати")
-                    12 -> listOf("без", "две", "надцати")
-                    13 -> listOf("без", "три", "надцати")
-                    14 -> listOf("без", "четыр", "надцати")
-                    16 -> listOf("без", "шест", "надцати")
-                    17 -> listOf("без", "сем", "надцати")
-                    18 -> listOf("без", "восем", "надцати")
-                    19 -> listOf("без", "девят", "надцати")
-                    else -> listOf("без", "двадцати")
-                }
-                val lines = leftWords + listOf(nom[nextH])
-                Pair(lines, lines.lastIndex)
-            }
-        }
-    }
+# А) Ровный час (minute == 0, для каждого часа 0..23)
+for h in range(24):
+    h12 = 12 if h % 12 == 0 else h % 12
+    tod = "утра" if 4 <= h <= 11 else ("дня" if 12 <= h <= 16 else ("вечера" if 17 <= h <= 22 else "ночи"))
+    if h12 == 1:
+        lines = ["час", tod]
+    elif 2 <= h12 <= 4:
+        lines = [nom[h12], "часа", tod]
+    else:
+        lines = [nom[h12], "часов", tod]
+    name = f"m0_h{h}"
+    expressions.append(f'                <Expression name="{name}">([MINUTE] == 0) &amp;&amp; ([HOUR_0_23] == {h})</Expression>')
+    compares.append(f'            <Compare expression="{name}">\n{make_group(lines, 0)}\n            </Compare>')
+
+# Б) Первая половина часа (1..30 минут) — все слова цельные!
+m_first_half = {
+    1: ["одна", "минута"], 2: ["две", "минуты"], 3: ["три", "минуты"], 4: ["четыре", "минуты"],
+    5: ["пять", "минут"], 6: ["шесть", "минут"], 7: ["семь", "минут"], 8: ["восемь", "минут"],
+    9: ["девять", "минут"], 10: ["десять", "минут"], 11: ["одиннадцать", "минут"], 12: ["двенадцать", "минут"],
+    13: ["тринадцать", "минут"], 14: ["четырнадцать", "минут"], 15: ["четверть"],
+    16: ["шестнадцать", "минут"], 17: ["семнадцать", "минут"], 18: ["восемнадцать", "минут"],
+    19: ["девятнадцать", "минут"], 20: ["двадцать", "минут"], 21: ["двадцать", "одна", "минута"],
+    22: ["двадцать", "две", "минуты"], 23: ["двадцать", "три", "минуты"], 24: ["двадцать", "четыре", "минуты"],
+    25: ["двадцать", "пять", "минут"], 26: ["двадцать", "шесть", "минут"], 27: ["двадцать", "семь", "минут"],
+    28: ["двадцать", "восемь", "минут"], 29: ["двадцать", "девять", "минут"], 30: ["половина"]
 }
 
-class WatchFaceStudioRuntime : WatchFaceService() {
-    override suspend fun createWatchFace(
-        surfaceHolder: SurfaceHolder,
-        watchState: WatchState,
-        complicationSlotsManager: ComplicationSlotsManager,
-        currentUserStyleRepository: CurrentUserStyleRepository
-    ): WatchFace {
-        val renderer = WordCanvasRenderer(
-            context = applicationContext,
-            surfaceHolder = surfaceHolder,
-            currentUserStyleRepository = currentUserStyleRepository,
-            watchState = watchState
-        )
-        return WatchFace(
-            watchFaceType = WatchFaceType.DIGITAL,
-            renderer = renderer
-        )
-    }
+for m, m_lines in m_first_half.items():
+    total_n = len(m_lines) + 1
+    start_y = 180 if total_n == 2 else (150 if total_n == 3 else 120)
+    step = 48
+    parts = [make_part_text(m_lines[i], start_y + i * step, False) for i in range(len(m_lines))]
+    name = f"min_{m}"
+    expressions.append(f'                <Expression name="{name}">[MINUTE] == {m}</Expression>')
+    compares.append(f'            <Compare expression="{name}">\n            <Group x="0" y="0" width="450" height="450">\n' + "\n".join(parts) + '\n            </Group>\n            </Compare>')
+
+# В) Прямой счёт (31..34, 36..39)
+m_direct = {
+    31: ["тридцать", "одна"], 32: ["тридцать", "две"], 33: ["тридцать", "три"], 34: ["тридцать", "четыре"],
+    36: ["тридцать", "шесть"], 37: ["тридцать", "семь"], 38: ["тридцать", "восемь"], 39: ["тридцать", "девять"]
 }
+for m, m_lines in m_direct.items():
+    start_y = 150
+    step = 48
+    parts = [make_part_text(m_lines[i], start_y + (i + 1) * step, False) for i in range(len(m_lines))]
+    name = f"min_{m}"
+    expressions.append(f'                <Expression name="{name}">[MINUTE] == {m}</Expression>')
+    compares.append(f'            <Compare expression="{name}">\n            <Group x="0" y="0" width="450" height="450">\n' + "\n".join(parts) + '\n            </Group>\n            </Compare>')
 
-class WordCanvasRenderer(
-    private val context: Context,
-    surfaceHolder: SurfaceHolder,
-    currentUserStyleRepository: CurrentUserStyleRepository,
-    watchState: WatchState
-) : Renderer.CanvasRenderer(
-    surfaceHolder = surfaceHolder,
-    currentUserStyleRepository = currentUserStyleRepository,
-    watchState = watchState,
-    canvasType = CanvasType.HARDWARE,
-    interactiveDrawModeUpdateDelayMillis = 1000L
-) {
-    private val pixelFont: Typeface by lazy {
-        try {
-            Typeface.createFromAsset(context.assets, "minecraft.ttf")
-        } catch (e: Exception) {
-            Typeface.MONOSPACE
-        }
-    }
-
-    private val paintRegular = Paint().apply {
-        color = Color.WHITE
-        textAlign = Paint.Align.LEFT
-        isAntiAlias = false
-    }
-
-    private val paintBold = Paint().apply {
-        color = Color.WHITE
-        textAlign = Paint.Align.LEFT
-        isAntiAlias = false
-        isFakeBoldText = true
-    }
-
-    override fun render(
-        canvas: Canvas,
-        bounds: Rect,
-        zonedDateTime: ZonedDateTime
-    ) {
-        val isAmbient = renderParameters.drawMode == DrawMode.AMBIENT
-        canvas.drawColor(Color.BLACK)
-
-        paintRegular.typeface = pixelFont
-        paintBold.typeface = pixelFont
-
-        if (isAmbient) {
-            paintRegular.style = Paint.Style.STROKE
-            paintRegular.strokeWidth = bounds.width() * 0.005f
-            paintRegular.isFakeBoldText = false
-
-            paintBold.style = Paint.Style.STROKE
-            paintBold.strokeWidth = bounds.width() * 0.011f
-            paintBold.isFakeBoldText = false
-        } else {
-            paintRegular.style = Paint.Style.FILL
-            paintRegular.isFakeBoldText = false
-
-            paintBold.style = Paint.Style.FILL
-            paintBold.isFakeBoldText = true
-        }
-
-        val (lines, boldIndex) = RussianTimeFormatter.format(zonedDateTime.hour, zonedDateTime.minute)
-        val fontSize = bounds.width() * 0.088f
-        val lineSpacing = fontSize * 1.32f
-
-        paintRegular.textSize = fontSize
-        paintBold.textSize = fontSize
-
-        val startX = bounds.left + bounds.width() * 0.18f
-        var startY = bounds.centerY() - (lines.size * lineSpacing / 2f) + fontSize * 0.8f
-
-        for (i in lines.indices) {
-            val p = if (i == boldIndex) paintBold else paintRegular
-            canvas.drawText(lines[i], startX, startY, p)
-            startY += lineSpacing
-        }
-    }
-
-    override fun renderHighlightLayer(
-        canvas: Canvas,
-        bounds: Rect,
-        zonedDateTime: ZonedDateTime
-    ) {}
+# Г) Обратный отсчёт (35 и 40..59) — все слова цельные!
+m_second_half = {
+    35: ["без", "двадцати", "пяти"], 40: ["без", "двадцати"], 41: ["без", "девятнадцати"],
+    42: ["без", "восемнадцати"], 43: ["без", "семнадцати"], 44: ["без", "шестнадцати"],
+    45: ["без", "четверти"], 46: ["без", "четырнадцати"], 47: ["без", "тринадцати"],
+    48: ["без", "двенадцати"], 49: ["без", "одиннадцати"], 50: ["без", "десяти"],
+    51: ["без", "девяти"], 52: ["без", "восьми"], 53: ["без", "семи"], 54: ["без", "шести"],
+    55: ["без", "пяти"], 56: ["без", "четырех", "минут"], 57: ["без", "трех", "минут"],
+    58: ["без", "двух", "минут"], 59: ["без", "одной", "минуты"]
 }
-""")
+for m, m_lines in m_second_half.items():
+    total_n = len(m_lines) + 1
+    start_y = 180 if total_n == 2 else (150 if total_n == 3 else 120)
+    step = 48
+    parts = [make_part_text(m_lines[i], start_y + i * step, False) for i in range(len(m_lines))]
+    name = f"min_{m}"
+    expressions.append(f'                <Expression name="{name}">[MINUTE] == {m}</Expression>')
+    compares.append(f'            <Compare expression="{name}">\n            <Group x="0" y="0" width="450" height="450">\n' + "\n".join(parts) + '\n            </Group>\n            </Compare>')
 
-# 9. EditorActivity.kt и DebugBroadcastReceiver.kt (чтобы все компоненты из манифеста wb.illuminator.two существовали)
-with open("app/src/main/java/com/samsung/android/wearable/watchfacestudio/editor/EditorActivity.kt", "w", encoding="utf-8") as f:
-    f.write("""package com.samsung.android.wearable.watchfacestudio.editor
+# Отдельный Condition для строки ЧАСА (без разбивки слов координаты стали ещё проще!)
+hour_expressions = []
+hour_compares = []
 
-import android.app.Activity
-import android.os.Bundle
+for h12 in range(1, 13):
+    nextH = 12 if (h12 + 1) % 12 == 0 else (h12 + 1) % 12
+    
+    # 1) Первая половина часа с 2 строками всего (минуты=15, 30 -> y = 180 + 48 = 228)
+    n1 = f"hg2_h{h12}"
+    hour_expressions.append(f'                <Expression name="{n1}">([HOUR_1_12] == {h12}) &amp;&amp; (([MINUTE] == 15) || ([MINUTE] == 30))</Expression>')
+    hour_compares.append(f'            <Compare expression="{n1}">\n{make_part_text(gen[nextH], 228, True)}\n            </Compare>')
 
-class EditorActivity : Activity() {
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        finish()
-    }
-}
-""")
+    # 2) Первая половина часа с 3 строками всего (1..14, 16..20 -> y = 150 + 2*48 = 246)
+    n2 = f"hg3_h{h12}"
+    hour_expressions.append(f'                <Expression name="{n2}">([HOUR_1_12] == {h12}) &amp;&amp; ((([MINUTE] &gt;= 1) &amp;&amp; ([MINUTE] &lt;= 14)) || (([MINUTE] &gt;= 16) &amp;&amp; ([MINUTE] &lt;= 20)))</Expression>')
+    hour_compares.append(f'            <Compare expression="{n2}">\n{make_part_text(gen[nextH], 246, True)}\n            </Compare>')
 
-with open("app/src/main/java/com/samsung/watchface/debug/DebugBroadcastReceiver.kt", "w", encoding="utf-8") as f:
-    f.write("""package com.samsung.watchface.debug
+    # 3) Первая половина часа с 4 строками всего (21..29 -> y = 120 + 3*48 = 264)
+    n3 = f"hg4_h{h12}"
+    hour_expressions.append(f'                <Expression name="{n3}">([HOUR_1_12] == {h12}) &amp;&amp; (([MINUTE] &gt;= 21) &amp;&amp; ([MINUTE] &lt;= 29))</Expression>')
+    hour_compares.append(f'            <Compare expression="{n3}">\n{make_part_text(gen[nextH], 264, True)}\n            </Compare>')
 
-import android.content.BroadcastReceiver
-import android.content.Context
-import android.content.Intent
+    # 4) Прямой счёт (31..34, 36..39) — текущий час h12 на 1-й строке (y = 150)
+    n4 = f"hd_h{h12}"
+    hour_expressions.append(f'                <Expression name="{n4}">([HOUR_1_12] == {h12}) &amp;&amp; ((([MINUTE] &gt;= 31) &amp;&amp; ([MINUTE] &lt;= 34)) || (([MINUTE] &gt;= 36) &amp;&amp; ([MINUTE] &lt;= 39)))</Expression>')
+    hour_compares.append(f'            <Compare expression="{n4}">\n{make_part_text(nom[h12], 150, True)}\n            </Compare>')
 
-class DebugBroadcastReceiver : BroadcastReceiver() {
-    override fun onReceive(context: Context?, intent: Intent?) {}
-}
-""")
+    # 5) Вторая половина часа с 3 строками всего (40..55 -> y = 150 + 2*48 = 246)
+    n5 = f"hn3_h{h12}"
+    hour_expressions.append(f'                <Expression name="{n5}">([HOUR_1_12] == {h12}) &amp;&amp; (([MINUTE] &gt;= 40) &amp;&amp; ([MINUTE] &lt;= 55))</Expression>')
+    hour_compares.append(f'            <Compare expression="{n5}">\n{make_part_text(nom[nextH], 246, True)}\n            </Compare>')
+
+    # 6) Вторая половина часа с 4 строками всего (35, 56..59 -> y = 120 + 3*48 = 264)
+    n6 = f"hn4_h{h12}"
+    hour_expressions.append(f'                <Expression name="{n6}">([HOUR_1_12] == {h12}) &amp;&amp; (([MINUTE] == 35) || (([MINUTE] &gt;= 56) &amp;&amp; ([MINUTE] &lt;= 59)))</Expression>')
+    hour_compares.append(f'            <Compare expression="{n6}">\n{make_part_text(nom[nextH], 264, True)}\n            </Compare>')
+
+watchface_xml = f"""<?xml version="1.0" encoding="utf-8"?>
+<WatchFace width="450" height="450">
+    <Metadata key="CLOCK_TYPE" value="DIGITAL" />
+    <Metadata key="PREVIEW_TIME" value="10:08:32" />
+    <Scene backgroundColor="#ff000000">
+        <Condition>
+            <Expressions>
+{chr(10).join(expressions)}
+            </Expressions>
+{chr(10).join(compares)}
+        </Condition>
+        <Condition>
+            <Expressions>
+{chr(10).join(hour_expressions)}
+            </Expressions>
+{chr(10).join(hour_compares)}
+        </Condition>
+    </Scene>
+</WatchFace>
+"""
+
+with open("app/src/main/res/raw/watchface.xml", "w", encoding="utf-8") as f:
+    f.write(watchface_xml)
