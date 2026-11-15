@@ -46,8 +46,8 @@ android {
         applicationId = "com.jeremysteckling.facerrel.watchfacepush.shaclock"
         minSdk = 34
         targetSdk = 34
-        versionCode = 5
-        versionName = "5.0.0"
+        versionCode = 6
+        versionName = "6.0.0"
     }
 
     signingConfigs {
@@ -86,7 +86,7 @@ os.makedirs("app/src/main/res/values", exist_ok=True)
 if os.path.exists("app/src/main/assets/minecraft.ttf"):
     shutil.copy("app/src/main/assets/minecraft.ttf", "app/src/main/res/font/minecraft.ttf")
 
-# 5. res/values/strings.xml (ресурсы для названия и меню карандаша)
+# 5. res/values/strings.xml
 with open("app/src/main/res/values/strings.xml", "w", encoding="utf-8") as f:
     f.write("""<?xml version="1.0" encoding="utf-8"?>
 <resources>
@@ -157,23 +157,36 @@ save_png("app/src/main/res/drawable/preview.png", 450, 450, lambda x, y, w, h:
     (255, 255, 255, 255) if 215 <= math.hypot(x - 225, y - 225) <= 222 else (0, 0, 0, 255)
 )
 
-# 9. Стрелки (Hour: 20x130 pivot(10,110); Minute: 16x180 pivot(8,155); Second: 8x210 pivot(4,175))
-# Стиль 0: Пиксельные (8-Bit Minecraft со ступенчатым острием)
+# 9. Стрелки
+# Стиль 0: Настоящие блочные пиксельные стрелки (сетка 4x4 пикселя)
+# Часовая 24x132 (6x33 блоков, ось вращения на y=110 -> pivotY=0.833)
 def pixel_h(x, y, w, h):
-    if 18 <= y <= 125 and 5 <= x <= 14: return (255, 255, 255, 255)
-    if 10 <= y < 18 and 7 <= x <= 12: return (255, 255, 255, 255)
-    if 4 <= y < 10 and 9 <= x <= 10: return (255, 255, 255, 255)
+    bx, by = x // 4, y // 4
+    if by in (0, 1) and bx in (2, 3): return (255, 255, 255, 255)
+    if by in (2, 3) and bx in (1, 2, 3, 4): return (255, 255, 255, 255)
+    if by in (4, 5) and bx in (0, 1, 2, 3, 4, 5): return (255, 255, 255, 255)
+    if 6 <= by <= 25:
+        if bx in (1, 4): return (255, 255, 255, 255)
+        if bx in (2, 3): return (0, 0, 0, 255)
+    if 26 <= by <= 31 and bx in (1, 2, 3, 4): return (255, 255, 255, 255)
     return (0, 0, 0, 0)
-save_png("app/src/main/res/drawable/h_pixel_h.png", 20, 130, pixel_h)
+save_png("app/src/main/res/drawable/h_pixel_h.png", 24, 132, pixel_h)
 
+# Минутная 20x180 (5x45 блоков, ось вращения на y=155 -> pivotY=0.861)
 def pixel_m(x, y, w, h):
-    if 14 <= y <= 174 and 4 <= x <= 11: return (255, 255, 255, 255)
-    if 6 <= y < 14 and 6 <= x <= 9: return (255, 255, 255, 255)
+    bx, by = x // 4, y // 4
+    if by in (0, 1) and bx == 2: return (255, 255, 255, 255)
+    if by in (2, 3) and bx in (1, 2, 3): return (255, 255, 255, 255)
+    if by in (4, 5) and bx in (0, 1, 2, 3, 4): return (255, 255, 255, 255)
+    if 6 <= by <= 36:
+        if bx in (1, 3): return (255, 255, 255, 255)
+        if bx == 2: return (0, 0, 0, 255)
+    if 37 <= by <= 43 and bx in (1, 2, 3): return (255, 255, 255, 255)
     return (0, 0, 0, 0)
-save_png("app/src/main/res/drawable/h_pixel_m.png", 16, 180, pixel_m)
+save_png("app/src/main/res/drawable/h_pixel_m.png", 20, 180, pixel_m)
 
 save_png("app/src/main/res/drawable/h_pixel_s.png", 8, 210, lambda x, y, w, h:
-    (255, 59, 48, 255) if 3 <= x <= 4 and 4 <= y <= 204 else (0, 0, 0, 0)
+    (255, 59, 48, 255) if 2 <= x <= 5 and 4 <= y <= 204 else (0, 0, 0, 0)
 )
 
 # Стиль 1: Мечи (Дайверские с острием)
@@ -239,7 +252,7 @@ save_png("app/src/main/res/drawable/hand_cap.png", 20, 20, lambda x, y, w, h:
     (255, 255, 255, 255) if 3 <= math.hypot(x - 9.5, y - 9.5) <= 8 else ((0, 0, 0, 255) if math.hypot(x - 9.5, y - 9.5) < 3 else (0, 0, 0, 0))
 )
 
-# 10. Расчёт 12 надписей "ща" близко к безелю (R=192px, строго в границах 0..450)
+# 10. Расчёт 12 надписей "ща" близко к безелю (R=192px)
 dial_marks = []
 radius = 192
 for i in range(12):
@@ -250,7 +263,6 @@ for i in range(12):
     x = int(cx - 32)
     y = int(cy - 20)
 
-    # Активная заливка
     dial_marks.append(f"""            <PartText x="{x}" y="{y}" width="64" height="40" alpha="255">
                 <Variant mode="AMBIENT" target="alpha" value="0" />
                 <Text align="CENTER">
@@ -258,7 +270,6 @@ for i in range(12):
                 </Text>
             </PartText>""")
 
-    # Полый контур в режиме AOD
     dial_marks.append(f"""            <PartText x="{x}" y="{y}" width="64" height="40" alpha="0">
                 <Variant mode="AMBIENT" target="alpha" value="255" />
                 <Text align="CENTER">
@@ -268,7 +279,7 @@ for i in range(12):
                 </Text>
             </PartText>""")
 
-# 11. Валидный watchface.xml по официальной спецификации WFF v1
+# 11. Валидный watchface.xml по спецификации WFF v1
 watchface_xml = f"""<?xml version="1.0" encoding="utf-8"?>
 <WatchFace width="450" height="450">
     <Metadata key="CLOCK_TYPE" value="ANALOG" />
@@ -291,12 +302,12 @@ watchface_xml = f"""<?xml version="1.0" encoding="utf-8"?>
 {chr(10).join(dial_marks)}
         </Group>
 
-        <!-- Выбор стиля стрелок (IDs 0..4 напрямую через ListConfiguration) -->
+        <!-- Выбор стиля стрелок -->
         <ListConfiguration id="hands_style">
             <ListOption id="0">
                 <AnalogClock x="0" y="0" width="450" height="450">
-                    <HourHand resource="h_pixel_h" x="215" y="115" width="20" height="130" pivotX="0.5" pivotY="0.846" />
-                    <MinuteHand resource="h_pixel_m" x="217" y="70" width="16" height="180" pivotX="0.5" pivotY="0.861" />
+                    <HourHand resource="h_pixel_h" x="213" y="115" width="24" height="132" pivotX="0.5" pivotY="0.833" />
+                    <MinuteHand resource="h_pixel_m" x="215" y="70" width="20" height="180" pivotX="0.5" pivotY="0.861" />
                     <SecondHand resource="h_pixel_s" x="221" y="50" width="8" height="210" pivotX="0.5" pivotY="0.833">
                         <Variant mode="AMBIENT" target="alpha" value="0" />
                     </SecondHand>
@@ -340,10 +351,12 @@ watchface_xml = f"""<?xml version="1.0" encoding="utf-8"?>
             </ListOption>
         </ListConfiguration>
 
-        <!-- Центральная заглушка оси стрелок -->
-        <PartImage x="215" y="215" width="20" height="20">
-            <Image resource="hand_cap" />
-        </PartImage>
+        <!-- Центральная заглушка оси стрелок (строго внутри Group) -->
+        <Group x="0" y="0" width="450" height="450">
+            <PartImage x="215" y="215" width="20" height="20">
+                <Image resource="hand_cap" />
+            </PartImage>
+        </Group>
 
     </Scene>
 </WatchFace>
