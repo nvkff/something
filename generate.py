@@ -27,11 +27,11 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "WordClock"
+rootProject.name = "ShaClock"
 include(":app")
 """)
 
-# 3. app/build.gradle.kts
+# 3. app/build.gradle.kts (Новый пакет и имя)
 os.makedirs("app", exist_ok=True)
 with open("app/build.gradle.kts", "w", encoding="utf-8") as f:
     f.write("""plugins {
@@ -39,15 +39,15 @@ with open("app/build.gradle.kts", "w", encoding="utf-8") as f:
 }
 
 android {
-    namespace = "com.jeremysteckling.facerrel.watchfacepush.wordclock"
+    namespace = "com.jeremysteckling.facerrel.watchfacepush.shaclock"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.jeremysteckling.facerrel.watchfacepush.wordclock"
+        applicationId = "com.jeremysteckling.facerrel.watchfacepush.shaclock"
         minSdk = 34
         targetSdk = 34
-        versionCode = 11
-        versionName = "11.0.0"
+        versionCode = 1
+        versionName = "1.0.0"
     }
 
     signingConfigs {
@@ -71,7 +71,7 @@ android {
 }
 """)
 
-# 4. Очистка и подготовка папок
+# 4. Очистка и создание папок
 if os.path.exists("app/src/main/java"):
     shutil.rmtree("app/src/main/java")
 if os.path.exists("app/src/main/res"):
@@ -90,7 +90,7 @@ if os.path.exists("app/src/main/assets/minecraft.ttf"):
 with open("app/src/main/res/values/strings.xml", "w", encoding="utf-8") as f:
     f.write("""<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Словами</string>
+    <string name="app_name">Часы ЩА</string>
 </resources>
 """)
 
@@ -116,23 +116,24 @@ with open("app/src/main/AndroidManifest.xml", "w", encoding="utf-8") as f:
 </manifest>
 """)
 
-# 7. res/xml/watch_face_info.xml
+# 7. res/xml/watch_face_info.xml (Editable = true открывает карандаш!)
 with open("app/src/main/res/xml/watch_face_info.xml", "w", encoding="utf-8") as f:
     f.write("""<?xml version="1.0" encoding="utf-8"?>
 <WatchFaceInfo>
     <Preview value="@drawable/preview" />
-    <Editable value="false" />
+    <Editable value="true" />
 </WatchFaceInfo>
 """)
 
-# 8. Генерация preview.png (450x450)
+# 8. Генерация preview.png с циферблатом "ЩА"
 w, h = 450, 450
 raw = bytearray()
 for y in range(h):
     raw.append(0)
     for x in range(w):
         d = math.hypot(x - 225, y - 225)
-        c = 255 if (200 <= d <= 212) else 0
+        # Ободок часов
+        c = 255 if (215 <= d <= 222) else 0
         raw.extend((c, c, c, 255))
 
 def chunk(t, d):
@@ -147,178 +148,191 @@ png = (
 with open("app/src/main/res/drawable/preview.png", "wb") as f:
     f.write(png)
 
-# 9. Генерация res/raw/watchface.xml с увеличенным размером шрифта
-nom = ["", "час", "два", "три", "четыре", "пять", "шесть", "семь", "восемь", "девять", "десять", "одиннадцать", "двенадцать"]
-gen = ["", "первого", "второго", "третьего", "четвертого", "пятого", "шестого", "седьмого", "восьмого", "девятого", "десятого", "одиннадцатого", "двенадцатого"]
-
-def make_part_text(line, y, is_bold):
-    x_pos = 15
-    box_w = 370
-    font_size = 43 if is_bold else 41
-    parts = []
+# 9. Генерация 12 меток "ща" по кругу
+dial_marks = []
+radius = 168 # Расстояние от центра (225, 225)
+for i in range(12):
+    angle_deg = i * 30
+    angle_rad = math.radians(angle_deg)
+    # Координаты центра каждого слова
+    cx = 225 + radius * math.sin(angle_rad)
+    cy = 225 - radius * math.cos(angle_rad)
     
-    # 1. Слой активного экрана
-    parts.append(f"""                <PartText x="{x_pos}" y="{y}" width="{box_w}" height="58" alpha="255">
-                    <Variant mode="AMBIENT" target="alpha" value="0" />
-                    <Text align="END">
-                        <Font family="minecraft" size="{font_size}" color="#ffffffff">{line}</Font>
-                    </Text>
-                </PartText>""")
+    # 70x40 - контейнер для слова "ща"
+    x = int(cx - 35)
+    y = int(cy - 20)
     
-    # Пиксельный полужирный акцент на часе
-    if is_bold:
-        parts.append(f"""                <PartText x="{x_pos - 2}" y="{y}" width="{box_w}" height="58" alpha="255">
-                    <Variant mode="AMBIENT" target="alpha" value="0" />
-                    <Text align="END">
-                        <Font family="minecraft" size="{font_size}" color="#ffffffff">{line}</Font>
-                    </Text>
-                </PartText>""")
-
-    # 2. Контурный слой для режима AOD
-    outline_w = 2 if is_bold else 1
-    parts.append(f"""                <PartText x="{x_pos}" y="{y}" width="{box_w}" height="58" alpha="0">
-                    <Variant mode="AMBIENT" target="alpha" value="255" />
-                    <Text align="END">
-                        <Font family="minecraft" size="{font_size}" color="#00000000">
-                            <Outline color="#ffffffff" width="{outline_w}">{line}</Outline>
-                        </Font>
-                    </Text>
-                </PartText>""")
-    
-    return "\n".join(parts)
-
-def make_group(lines, bold_idx):
-    n = len(lines)
-    start_y = 170 if n == 2 else (138 if n == 3 else 106)
-    step = 58
-    parts = [make_part_text(lines[i], start_y + i * step, i == bold_idx) for i in range(n)]
-    return '            <Group x="0" y="0" width="450" height="450">\n' + "\n".join(parts) + '\n            </Group>'
-
-expressions = []
-compares = []
-
-# А) Ровный час (minute == 0)
-for h in range(24):
-    h12 = 12 if h % 12 == 0 else h % 12
-    tod = "утра" if 4 <= h <= 11 else ("дня" if 12 <= h <= 16 else ("вечера" if 17 <= h <= 22 else "ночи"))
-    if h12 == 1:
-        lines = ["час", tod]
-    elif 2 <= h12 <= 4:
-        lines = [nom[h12], "часа", tod]
+    # Выделяем 12, 3, 6, 9 часов капсом "ЩА" и жирным, остальные строчными "ща"
+    if i in (0, 3, 6, 9):
+        word = "ЩА"
+        f_size = 32
+        weight = ' weight="BOLD"'
     else:
-        lines = [nom[h12], "часов", tod]
-    name = f"m0_h{h}"
-    expressions.append(f'                <Expression name="{name}">([MINUTE] == 0) &amp;&amp; ([HOUR_0_23] == {h})</Expression>')
-    compares.append(f'            <Compare expression="{name}">\n{make_group(lines, 0)}\n            </Compare>')
+        word = "ща"
+        f_size = 26
+        weight = ' weight="NORMAL"'
+        
+    dial_marks.append(f"""            <PartText x="{x}" y="{y}" width="70" height="40">
+                <Text align="CENTER">
+                    <Font family="minecraft" size="{f_size}" color="#ffffffff"{weight}>{word}</Font>
+                </Text>
+            </PartText>""")
 
-# Б) Первая половина часа (1..30 минут)
-m_first_half = {
-    1: ["одна", "минута"], 2: ["две", "минуты"], 3: ["три", "минуты"], 4: ["четыре", "минуты"],
-    5: ["пять", "минут"], 6: ["шесть", "минут"], 7: ["семь", "минут"], 8: ["восемь", "минут"],
-    9: ["девять", "минут"], 10: ["десять", "минут"], 11: ["одиннадцать", "минут"], 12: ["двенадцать", "минут"],
-    13: ["тринадцать", "минут"], 14: ["четырнадцать", "минут"], 15: ["четверть"],
-    16: ["шестнадцать", "минут"], 17: ["семнадцать", "минут"], 18: ["восемнадцать", "минут"],
-    19: ["девятнадцать", "минут"], 20: ["двадцать", "минут"], 21: ["двадцать", "одна", "минута"],
-    22: ["двадцать", "две", "минуты"], 23: ["двадцать", "три", "минуты"], 24: ["двадцать", "четыре", "минуты"],
-    25: ["двадцать", "пять", "минут"], 26: ["двадцать", "шесть", "минут"], 27: ["двадцать", "семь", "минут"],
-    28: ["двадцать", "восемь", "минут"], 29: ["двадцать", "девять", "минут"], 30: ["половина"]
-}
-
-for m, m_lines in m_first_half.items():
-    total_n = len(m_lines) + 1
-    start_y = 170 if total_n == 2 else (138 if total_n == 3 else 106)
-    step = 58
-    parts = [make_part_text(m_lines[i], start_y + i * step, False) for i in range(len(m_lines))]
-    name = f"min_{m}"
-    expressions.append(f'                <Expression name="{name}">[MINUTE] == {m}</Expression>')
-    compares.append(f'            <Compare expression="{name}">\n            <Group x="0" y="0" width="450" height="450">\n' + "\n".join(parts) + '\n            </Group>\n            </Compare>')
-
-# В) Прямой счёт (31..34, 36..39)
-m_direct = {
-    31: ["тридцать", "один"], 32: ["тридцать", "два"], 33: ["тридцать", "три"], 34: ["тридцать", "четыре"],
-    36: ["тридцать", "шесть"], 37: ["тридцать", "семь"], 38: ["тридцать", "восемь"], 39: ["тридцать", "девять"]
-}
-for m, m_lines in m_direct.items():
-    start_y = 138
-    step = 58
-    parts = [make_part_text(m_lines[i], start_y + (i + 1) * step, False) for i in range(len(m_lines))]
-    name = f"min_{m}"
-    expressions.append(f'                <Expression name="{name}">[MINUTE] == {m}</Expression>')
-    compares.append(f'            <Compare expression="{name}">\n            <Group x="0" y="0" width="450" height="450">\n' + "\n".join(parts) + '\n            </Group>\n            </Compare>')
-
-# Г) Обратный отсчёт (35 и 40..59)
-m_second_half = {
-    35: ["без", "двадцати", "пяти"], 40: ["без", "двадцати"], 41: ["без", "девятнадцати"],
-    42: ["без", "восемнадцати"], 43: ["без", "семнадцати"], 44: ["без", "шестнадцати"],
-    45: ["без", "четверти"], 46: ["без", "четырнадцати"], 47: ["без", "тринадцати"],
-    48: ["без", "двенадцати"], 49: ["без", "одиннадцати"], 50: ["без", "десяти"],
-    51: ["без", "девяти"], 52: ["без", "восьми"], 53: ["без", "семи"], 54: ["без", "шести"],
-    55: ["без", "пяти"], 56: ["без", "четырех", "минут"], 57: ["без", "трех", "минут"],
-    58: ["без", "двух", "минут"], 59: ["без", "одной", "минуты"]
-}
-for m, m_lines in m_second_half.items():
-    total_n = len(m_lines) + 1
-    start_y = 170 if total_n == 2 else (138 if total_n == 3 else 106)
-    step = 58
-    parts = [make_part_text(m_lines[i], start_y + i * step, False) for i in range(len(m_lines))]
-    name = f"min_{m}"
-    expressions.append(f'                <Expression name="{name}">[MINUTE] == {m}</Expression>')
-    compares.append(f'            <Compare expression="{name}">\n            <Group x="0" y="0" width="450" height="450">\n' + "\n".join(parts) + '\n            </Group>\n            </Compare>')
-
-# Отдельный Condition для строки ЧАСА
-hour_expressions = []
-hour_compares = []
-
-for h12 in range(1, 13):
-    nextH = 12 if (h12 + 1) % 12 == 0 else (h12 + 1) % 12
-    
-    # 1) 2 строки всего (y = 170 + 58 = 228)
-    n1 = f"hg2_h{h12}"
-    hour_expressions.append(f'                <Expression name="{n1}">([HOUR_1_12] == {h12}) &amp;&amp; (([MINUTE] == 15) || ([MINUTE] == 30))</Expression>')
-    hour_compares.append(f'            <Compare expression="{n1}">\n            <Group x="0" y="0" width="450" height="450">\n{make_part_text(gen[nextH], 228, True)}\n            </Group>\n            </Compare>')
-
-    # 2) 3 строки всего (y = 138 + 2*58 = 254)
-    n2 = f"hg3_h{h12}"
-    hour_expressions.append(f'                <Expression name="{n2}">([HOUR_1_12] == {h12}) &amp;&amp; ((([MINUTE] &gt;= 1) &amp;&amp; ([MINUTE] &lt;= 14)) || (([MINUTE] &gt;= 16) &amp;&amp; ([MINUTE] &lt;= 20)))</Expression>')
-    hour_compares.append(f'            <Compare expression="{n2}">\n            <Group x="0" y="0" width="450" height="450">\n{make_part_text(gen[nextH], 254, True)}\n            </Group>\n            </Compare>')
-
-    # 3) 4 строки всего (y = 106 + 3*58 = 280)
-    n3 = f"hg4_h{h12}"
-    hour_expressions.append(f'                <Expression name="{n3}">([HOUR_1_12] == {h12}) &amp;&amp; (([MINUTE] &gt;= 21) &amp;&amp; ([MINUTE] &lt;= 29))</Expression>')
-    hour_compares.append(f'            <Compare expression="{n3}">\n            <Group x="0" y="0" width="450" height="450">\n{make_part_text(gen[nextH], 280, True)}\n            </Group>\n            </Compare>')
-
-    # 4) Прямой счёт (31..34, 36..39) — час на 1-й строке (y = 138)
-    n4 = f"hd_h{h12}"
-    hour_expressions.append(f'                <Expression name="{n4}">([HOUR_1_12] == {h12}) &amp;&amp; ((([MINUTE] &gt;= 31) &amp;&amp; ([MINUTE] &lt;= 34)) || (([MINUTE] &gt;= 36) &amp;&amp; ([MINUTE] &lt;= 39)))</Expression>')
-    hour_compares.append(f'            <Compare expression="{n4}">\n            <Group x="0" y="0" width="450" height="450">\n{make_part_text(nom[h12], 138, True)}\n            </Group>\n            </Compare>')
-
-    # 5) Вторая половина часа, 3 строки всего (y = 138 + 2*58 = 254)
-    n5 = f"hn3_h{h12}"
-    hour_expressions.append(f'                <Expression name="{n5}">([HOUR_1_12] == {h12}) &amp;&amp; (([MINUTE] &gt;= 40) &amp;&amp; ([MINUTE] &lt;= 55))</Expression>')
-    hour_compares.append(f'            <Compare expression="{n5}">\n            <Group x="0" y="0" width="450" height="450">\n{make_part_text(nom[nextH], 254, True)}\n            </Group>\n            </Compare>')
-
-    # 6) Вторая половина часа, 4 строки всего (y = 106 + 3*58 = 280)
-    n6 = f"hn4_h{h12}"
-    hour_expressions.append(f'                <Expression name="{n6}">([HOUR_1_12] == {h12}) &amp;&amp; (([MINUTE] == 35) || (([MINUTE] &gt;= 56) &amp;&amp; ([MINUTE] &lt;= 59)))</Expression>')
-    hour_compares.append(f'            <Compare expression="{n6}">\n            <Group x="0" y="0" width="450" height="450">\n{make_part_text(nom[nextH], 280, True)}\n            </Group>\n            </Compare>')
-
+# 10. Генерация WFF XML с UserConfigurations (меню под карандашиком)
 watchface_xml = f"""<?xml version="1.0" encoding="utf-8"?>
 <WatchFace width="450" height="450">
-    <Metadata key="CLOCK_TYPE" value="DIGITAL" />
-    <Metadata key="PREVIEW_TIME" value="10:08:32" />
+    <Metadata key="CLOCK_TYPE" value="ANALOG" />
+    <Metadata key="PREVIEW_TIME" value="10:10:00" />
+
+    <UserConfigurations>
+        <ListConfiguration id="hands_style" displayName="Стиль стрелок" defaultValue="pixel">
+            <ListOption id="pixel" displayName="1. Пиксельные (8-Bit)" />
+            <ListOption id="sword" displayName="2. Мечи (Дайвер)" />
+            <ListOption id="classic" displayName="3. Минимализм" />
+            <ListOption id="skeleton" displayName="4. Скелетоны" />
+            <ListOption id="needle" displayName="5. Тонкие стрелы" />
+        </ListConfiguration>
+    </UserConfigurations>
+
     <Scene backgroundColor="#ff000000">
+
+        <!-- 12 надписей "ЩА" по кругу -->
+        <Group x="0" y="0" width="450" height="450">
+{chr(10).join(dial_marks)}
+        </Group>
+
+        <!-- СТИЛЬ 1: Пиксельные стрелки (8-bit) -->
         <Condition>
             <Expressions>
-{chr(10).join(expressions)}
+                <Expression name="is_pixel">[CONFIGURATION.hands_style] == 'pixel'</Expression>
             </Expressions>
-{chr(10).join(compares)}
+            <Compare expression="is_pixel">
+                <Group x="0" y="0" width="450" height="450">
+                    <!-- Часовая стрелка -->
+                    <PartDraw x="219" y="115" width="12" height="110" pivotX="0.5" pivotY="1.0">
+                        <Line startX="6" startY="0" endX="6" endY="110" color="#ffffffff" strokeWidth="12" strokeCap="SQUARE" />
+                        <Transform target="rotate" value="[HOUR_0_11] * 30 + [MINUTE] * 0.5" />
+                    </PartDraw>
+                    <!-- Минутная стрелка -->
+                    <PartDraw x="221" y="65" width="8" height="160" pivotX="0.5" pivotY="1.0">
+                        <Line startX="4" startY="0" endX="4" endY="160" color="#ffffffff" strokeWidth="8" strokeCap="SQUARE" />
+                        <Transform target="rotate" value="[MINUTE] * 6" />
+                    </PartDraw>
+                    <!-- Секундная стрелка (гаснет в AOD) -->
+                    <PartDraw x="223" y="55" width="4" height="170" pivotX="0.5" pivotY="1.0">
+                        <Variant mode="AMBIENT" target="alpha" value="0" />
+                        <Line startX="2" startY="0" endX="2" endY="170" color="#ffff3b30" strokeWidth="4" strokeCap="SQUARE" />
+                        <Transform target="rotate" value="[SECOND] * 6" />
+                    </PartDraw>
+                </Group>
+            </Compare>
         </Condition>
+
+        <!-- СТИЛЬ 2: Стрелки-мечи (Дайверские) -->
         <Condition>
             <Expressions>
-{chr(10).join(hour_expressions)}
+                <Expression name="is_sword">[CONFIGURATION.hands_style] == 'sword'</Expression>
             </Expressions>
-{chr(10).join(hour_compares)}
+            <Compare expression="is_sword">
+                <Group x="0" y="0" width="450" height="450">
+                    <!-- Часовая стрелка -->
+                    <PartDraw x="217" y="110" width="16" height="115" pivotX="0.5" pivotY="1.0">
+                        <Line startX="8" startY="0" endX="8" endY="115" color="#ffffffff" strokeWidth="16" strokeCap="ROUND" />
+                        <Transform target="rotate" value="[HOUR_0_11] * 30 + [MINUTE] * 0.5" />
+                    </PartDraw>
+                    <!-- Минутная стрелка -->
+                    <PartDraw x="220" y="55" width="10" height="170" pivotX="0.5" pivotY="1.0">
+                        <Line startX="5" startY="0" endX="5" endY="170" color="#ffffffff" strokeWidth="10" strokeCap="ROUND" />
+                        <Transform target="rotate" value="[MINUTE] * 6" />
+                    </PartDraw>
+                    <!-- Секундная стрелка -->
+                    <PartDraw x="223" y="45" width="4" height="180" pivotX="0.5" pivotY="1.0">
+                        <Variant mode="AMBIENT" target="alpha" value="0" />
+                        <Line startX="2" startY="0" endX="2" endY="180" color="#ffffcc00" strokeWidth="4" strokeCap="ROUND" />
+                        <Transform target="rotate" value="[SECOND] * 6" />
+                    </PartDraw>
+                </Group>
+            </Compare>
         </Condition>
+
+        <!-- СТИЛЬ 3: Классический минимализм -->
+        <Condition>
+            <Expressions>
+                <Expression name="is_classic">[CONFIGURATION.hands_style] == 'classic'</Expression>
+            </Expressions>
+            <Compare expression="is_classic">
+                <Group x="0" y="0" width="450" height="450">
+                    <PartDraw x="220" y="125" width="10" height="100" pivotX="0.5" pivotY="1.0">
+                        <Line startX="5" startY="0" endX="5" endY="100" color="#ffffffff" strokeWidth="10" strokeCap="ROUND" />
+                        <Transform target="rotate" value="[HOUR_0_11] * 30 + [MINUTE] * 0.5" />
+                    </PartDraw>
+                    <PartDraw x="222" y="70" width="6" height="155" pivotX="0.5" pivotY="1.0">
+                        <Line startX="3" startY="0" endX="3" endY="155" color="#ffffffff" strokeWidth="6" strokeCap="ROUND" />
+                        <Transform target="rotate" value="[MINUTE] * 6" />
+                    </PartDraw>
+                    <PartDraw x="224" y="60" width="2" height="165" pivotX="0.5" pivotY="1.0">
+                        <Variant mode="AMBIENT" target="alpha" value="0" />
+                        <Line startX="1" startY="0" endX="1" endY="165" color="#ffff3b30" strokeWidth="2" strokeCap="ROUND" />
+                        <Transform target="rotate" value="[SECOND] * 6" />
+                    </PartDraw>
+                </Group>
+            </Compare>
+        </Condition>
+
+        <!-- СТИЛЬ 4: Скелетоны (полые стрелки) -->
+        <Condition>
+            <Expressions>
+                <Expression name="is_skeleton">[CONFIGURATION.hands_style] == 'skeleton'</Expression>
+            </Expressions>
+            <Compare expression="is_skeleton">
+                <Group x="0" y="0" width="450" height="450">
+                    <PartDraw x="218" y="115" width="14" height="110" pivotX="0.5" pivotY="1.0">
+                        <Rectangle x="1" y="0" width="12" height="110" color="#00000000" strokeWidth="3" strokeColor="#ffffffff" />
+                        <Transform target="rotate" value="[HOUR_0_11] * 30 + [MINUTE] * 0.5" />
+                    </PartDraw>
+                    <PartDraw x="220" y="60" width="10" height="165" pivotX="0.5" pivotY="1.0">
+                        <Rectangle x="1" y="0" width="8" height="165" color="#00000000" strokeWidth="3" strokeColor="#ffffffff" />
+                        <Transform target="rotate" value="[MINUTE] * 6" />
+                    </PartDraw>
+                    <PartDraw x="224" y="50" width="2" height="175" pivotX="0.5" pivotY="1.0">
+                        <Variant mode="AMBIENT" target="alpha" value="0" />
+                        <Line startX="1" startY="0" endX="1" endY="175" color="#ff00e5ff" strokeWidth="3" strokeCap="ROUND" />
+                        <Transform target="rotate" value="[SECOND] * 6" />
+                    </PartDraw>
+                </Group>
+            </Compare>
+        </Condition>
+
+        <!-- СТИЛЬ 5: Тонкие иглы (винтажные) -->
+        <Condition>
+            <Expressions>
+                <Expression name="is_needle">[CONFIGURATION.hands_style] == 'needle'</Expression>
+            </Expressions>
+            <Compare expression="is_needle">
+                <Group x="0" y="0" width="450" height="450">
+                    <PartDraw x="223" y="120" width="4" height="105" pivotX="0.5" pivotY="1.0">
+                        <Line startX="2" startY="0" endX="2" endY="105" color="#ffffffff" strokeWidth="4" strokeCap="ROUND" />
+                        <Transform target="rotate" value="[HOUR_0_11] * 30 + [MINUTE] * 0.5" />
+                    </PartDraw>
+                    <PartDraw x="223.5" y="60" width="3" height="165" pivotX="0.5" pivotY="1.0">
+                        <Line startX="1.5" startY="0" endX="1.5" endY="165" color="#ffffffff" strokeWidth="3" strokeCap="ROUND" />
+                        <Transform target="rotate" value="[MINUTE] * 6" />
+                    </PartDraw>
+                    <PartDraw x="224.25" y="50" width="1.5" height="175" pivotX="0.5" pivotY="1.0">
+                        <Variant mode="AMBIENT" target="alpha" value="0" />
+                        <Line startX="0.75" startY="0" endX="0.75" endY="175" color="#ffff3b30" strokeWidth="2" strokeCap="ROUND" />
+                        <Transform target="rotate" value="[SECOND] * 6" />
+                    </PartDraw>
+                </Group>
+            </Compare>
+        </Condition>
+
+        <!-- Центральная заклепка (ось стрелок) -->
+        <PartDraw x="215" y="215" width="20" height="20">
+            <RoundRectangle x="0" y="0" width="20" height="20" cornerRadiusX="10" cornerRadiusY="10" color="#ffffffff" />
+            <RoundRectangle x="4" y="4" width="12" height="12" cornerRadiusX="6" cornerRadiusY="6" color="#ff000000" />
+        </PartDraw>
+
     </Scene>
 </WatchFace>
 """
