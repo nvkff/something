@@ -46,8 +46,8 @@ android {
         applicationId = "com.jeremysteckling.facerrel.watchfacepush.shaclock"
         minSdk = 34
         targetSdk = 34
-        versionCode = 4
-        versionName = "4.0.0"
+        versionCode = 5
+        versionName = "5.0.0"
     }
 
     signingConfigs {
@@ -80,17 +80,23 @@ if os.path.exists("app/src/main/res"):
 os.makedirs("app/src/main/res/xml", exist_ok=True)
 os.makedirs("app/src/main/res/raw", exist_ok=True)
 os.makedirs("app/src/main/res/font", exist_ok=True)
-os.makedirs("app/src/main/res/drawable-nodpi", exist_ok=True)
+os.makedirs("app/src/main/res/drawable", exist_ok=True)
 os.makedirs("app/src/main/res/values", exist_ok=True)
 
 if os.path.exists("app/src/main/assets/minecraft.ttf"):
     shutil.copy("app/src/main/assets/minecraft.ttf", "app/src/main/res/font/minecraft.ttf")
 
-# 5. res/values/strings.xml
+# 5. res/values/strings.xml (ресурсы для названия и меню карандаша)
 with open("app/src/main/res/values/strings.xml", "w", encoding="utf-8") as f:
     f.write("""<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Часы ЩА</string>
+    <string name="hands_style_label">Стиль стрелок</string>
+    <string name="style_pixel">1. Пиксельные</string>
+    <string name="style_sword">2. Мечи</string>
+    <string name="style_classic">3. Минимализм</string>
+    <string name="style_skeleton">4. Скелетоны</string>
+    <string name="style_needle">5. Тонкие иглы</string>
 </resources>
 """)
 
@@ -121,7 +127,7 @@ with open("app/src/main/res/xml/watch_face_info.xml", "w", encoding="utf-8") as 
     f.write("""<?xml version="1.0" encoding="utf-8"?>
 <WatchFaceInfo>
     <Preview value="@drawable/preview" />
-    <Editable value="false" />
+    <Editable value="true" />
 </WatchFaceInfo>
 """)
 
@@ -147,77 +153,197 @@ def save_png(filename, w, h, pixel_func):
         f.write(png)
 
 # 8. preview.png (450x450)
-save_png("app/src/main/res/drawable-nodpi/preview.png", 450, 450, lambda x, y, w, h: 
-    (255, 255, 255, 255) if 215 <= math.hypot(x-225, y-225) <= 222 else (0, 0, 0, 0)
+save_png("app/src/main/res/drawable/preview.png", 450, 450, lambda x, y, w, h:
+    (255, 255, 255, 255) if 215 <= math.hypot(x - 225, y - 225) <= 222 else (0, 0, 0, 255)
 )
 
-# 9. Стрелки (аккуратный классический батон с острием)
-# Часовая: ширина 14, длина 110 (точка вращения на y=95)
-save_png("app/src/main/res/drawable-nodpi/hand_hour.png", 14, 110, lambda x, y, w, h:
-    (255, 255, 255, 255) if 2 <= x <= 11 and 5 <= y <= 95 else (0, 0, 0, 0)
+# 9. Стрелки (Hour: 20x130 pivot(10,110); Minute: 16x180 pivot(8,155); Second: 8x210 pivot(4,175))
+# Стиль 0: Пиксельные (8-Bit Minecraft со ступенчатым острием)
+def pixel_h(x, y, w, h):
+    if 18 <= y <= 125 and 5 <= x <= 14: return (255, 255, 255, 255)
+    if 10 <= y < 18 and 7 <= x <= 12: return (255, 255, 255, 255)
+    if 4 <= y < 10 and 9 <= x <= 10: return (255, 255, 255, 255)
+    return (0, 0, 0, 0)
+save_png("app/src/main/res/drawable/h_pixel_h.png", 20, 130, pixel_h)
+
+def pixel_m(x, y, w, h):
+    if 14 <= y <= 174 and 4 <= x <= 11: return (255, 255, 255, 255)
+    if 6 <= y < 14 and 6 <= x <= 9: return (255, 255, 255, 255)
+    return (0, 0, 0, 0)
+save_png("app/src/main/res/drawable/h_pixel_m.png", 16, 180, pixel_m)
+
+save_png("app/src/main/res/drawable/h_pixel_s.png", 8, 210, lambda x, y, w, h:
+    (255, 59, 48, 255) if 3 <= x <= 4 and 4 <= y <= 204 else (0, 0, 0, 0)
 )
 
-# Минутная: ширина 10, длина 165 (точка вращения на y=150)
-save_png("app/src/main/res/drawable-nodpi/hand_minute.png", 10, 165, lambda x, y, w, h:
-    (255, 255, 255, 255) if 2 <= x <= 7 and 5 <= y <= 150 else (0, 0, 0, 0)
+# Стиль 1: Мечи (Дайверские с острием)
+def sword_h(x, y, w, h):
+    if y < 6 or y > 125: return (0, 0, 0, 0)
+    half_w = 7.0 if y > 28 else (y - 6) * (7.0 / 22.0)
+    return (255, 255, 255, 255) if abs(x - 9.5) <= half_w else (0, 0, 0, 0)
+save_png("app/src/main/res/drawable/h_sword_h.png", 20, 130, sword_h)
+
+def sword_m(x, y, w, h):
+    if y < 6 or y > 175: return (0, 0, 0, 0)
+    half_w = 5.0 if y > 26 else (y - 6) * (5.0 / 20.0)
+    return (255, 255, 255, 255) if abs(x - 7.5) <= half_w else (0, 0, 0, 0)
+save_png("app/src/main/res/drawable/h_sword_m.png", 16, 180, sword_m)
+
+save_png("app/src/main/res/drawable/h_sword_s.png", 8, 210, lambda x, y, w, h:
+    (255, 204, 0, 255) if 3 <= x <= 4 and 4 <= y <= 204 else (0, 0, 0, 0)
 )
 
-# Секундная: ширина 4, длина 190 (красная, точка вращения на y=160)
-save_png("app/src/main/res/drawable-nodpi/hand_second.png", 4, 190, lambda x, y, w, h:
-    (255, 59, 48, 255) if 1 <= x <= 2 and 5 <= y <= 160 else (0, 0, 0, 0)
+# Стиль 2: Минимализм (Батоны)
+save_png("app/src/main/res/drawable/h_classic_h.png", 20, 130, lambda x, y, w, h:
+    (255, 255, 255, 255) if 6 <= x <= 13 and 10 <= y <= 122 else (0, 0, 0, 0)
+)
+save_png("app/src/main/res/drawable/h_classic_m.png", 16, 180, lambda x, y, w, h:
+    (255, 255, 255, 255) if 5 <= x <= 10 and 8 <= y <= 172 else (0, 0, 0, 0)
+)
+save_png("app/src/main/res/drawable/h_classic_s.png", 8, 210, lambda x, y, w, h:
+    (255, 59, 48, 255) if 3 <= x <= 4 and 4 <= y <= 204 else (0, 0, 0, 0)
 )
 
-# Центральная ось
-save_png("app/src/main/res/drawable-nodpi/hand_cap.png", 18, 18, lambda x, y, w, h:
-    (255, 255, 255, 255) if math.hypot(x-9, y-9) <= 8 and math.hypot(x-9, y-9) >= 2 else (0, 0, 0, 0)
+# Стиль 3: Скелетоны (Полые рамки)
+def skel_h(x, y, w, h):
+    if 4 <= x <= 15 and 8 <= y <= 125:
+        if 7 <= x <= 12 and 18 <= y <= 102: return (0, 0, 0, 0)
+        return (255, 255, 255, 255)
+    return (0, 0, 0, 0)
+save_png("app/src/main/res/drawable/h_skel_h.png", 20, 130, skel_h)
+
+def skel_m(x, y, w, h):
+    if 4 <= x <= 11 and 8 <= y <= 175:
+        if 6 <= x <= 9 and 18 <= y <= 148: return (0, 0, 0, 0)
+        return (255, 255, 255, 255)
+    return (0, 0, 0, 0)
+save_png("app/src/main/res/drawable/h_skel_m.png", 16, 180, skel_m)
+
+save_png("app/src/main/res/drawable/h_skel_s.png", 8, 210, lambda x, y, w, h:
+    (0, 229, 255, 255) if 3 <= x <= 4 and 4 <= y <= 204 else (0, 0, 0, 0)
 )
 
-# 10. Расчёт 12 надписей "ща" ближе к безелю (R=194)
+# Стиль 4: Тонкие иглы
+save_png("app/src/main/res/drawable/h_needle_h.png", 20, 130, lambda x, y, w, h:
+    (255, 255, 255, 255) if 8 <= x <= 11 and 8 <= y <= 125 else (0, 0, 0, 0)
+)
+save_png("app/src/main/res/drawable/h_needle_m.png", 16, 180, lambda x, y, w, h:
+    (255, 255, 255, 255) if 7 <= x <= 8 and 6 <= y <= 175 else (0, 0, 0, 0)
+)
+save_png("app/src/main/res/drawable/h_needle_s.png", 8, 210, lambda x, y, w, h:
+    (255, 59, 48, 255) if 3 <= x <= 4 and 4 <= y <= 204 else (0, 0, 0, 0)
+)
+
+# Центральная заглушка (кольцо)
+save_png("app/src/main/res/drawable/hand_cap.png", 20, 20, lambda x, y, w, h:
+    (255, 255, 255, 255) if 3 <= math.hypot(x - 9.5, y - 9.5) <= 8 else ((0, 0, 0, 255) if math.hypot(x - 9.5, y - 9.5) < 3 else (0, 0, 0, 0))
+)
+
+# 10. Расчёт 12 надписей "ща" близко к безелю (R=192px, строго в границах 0..450)
 dial_marks = []
-radius = 194
+radius = 192
 for i in range(12):
     angle_deg = i * 30
     angle_rad = math.radians(angle_deg)
     cx = 225 + radius * math.sin(angle_rad)
     cy = 225 - radius * math.cos(angle_rad)
-    x = int(cx - 35)
+    x = int(cx - 32)
     y = int(cy - 20)
-    
-    dial_marks.append(f"""            <PartText x="{x}" y="{y}" width="70" height="40">
+
+    # Активная заливка
+    dial_marks.append(f"""            <PartText x="{x}" y="{y}" width="64" height="40" alpha="255">
+                <Variant mode="AMBIENT" target="alpha" value="0" />
                 <Text align="CENTER">
-                    <Font family="minecraft" size="32" color="#ffffffff" weight="NORMAL">ща</Font>
+                    <Font family="minecraft" size="32" color="#ffffffff">ща</Font>
                 </Text>
             </PartText>""")
 
-# 11. res/raw/watchface.xml по официальной структуре WFF
+    # Полый контур в режиме AOD
+    dial_marks.append(f"""            <PartText x="{x}" y="{y}" width="64" height="40" alpha="0">
+                <Variant mode="AMBIENT" target="alpha" value="255" />
+                <Text align="CENTER">
+                    <Font family="minecraft" size="32" color="#00000000">
+                        <Outline color="#ffffffff" width="1">ща</Outline>
+                    </Font>
+                </Text>
+            </PartText>""")
+
+# 11. Валидный watchface.xml по официальной спецификации WFF v1
 watchface_xml = f"""<?xml version="1.0" encoding="utf-8"?>
 <WatchFace width="450" height="450">
     <Metadata key="CLOCK_TYPE" value="ANALOG" />
     <Metadata key="PREVIEW_TIME" value="10:10:30" />
 
+    <UserConfigurations>
+        <ListConfiguration id="hands_style" displayName="hands_style_label" defaultValue="0">
+            <ListOption id="0" displayName="style_pixel" />
+            <ListOption id="1" displayName="style_sword" />
+            <ListOption id="2" displayName="style_classic" />
+            <ListOption id="3" displayName="style_skeleton" />
+            <ListOption id="4" displayName="style_needle" />
+        </ListConfiguration>
+    </UserConfigurations>
+
     <Scene backgroundColor="#ff000000">
 
-        <!-- 12 надписей "ща" -->
+        <!-- 12 одинаковых надписей "ща" по кругу -->
         <Group x="0" y="0" width="450" height="450">
 {chr(10).join(dial_marks)}
         </Group>
 
-        <!-- Аналоговые стрелки -->
-        <AnalogClock x="0" y="0" width="450" height="450">
-            <HourHand x="218" y="130" width="14" height="110" pivotX="0.5" pivotY="0.864">
-                <PartImage resource="hand_hour" x="0" y="0" width="14" height="110" />
-            </HourHand>
-            <MinuteHand x="220" y="75" width="10" height="165" pivotX="0.5" pivotY="0.909">
-                <PartImage resource="hand_minute" x="0" y="0" width="10" height="165" />
-            </MinuteHand>
-            <SecondHand x="223" y="65" width="4" height="190" pivotX="0.5" pivotY="0.842">
-                <Variant mode="AMBIENT" target="alpha" value="0" />
-                <PartImage resource="hand_second" x="0" y="0" width="4" height="190" />
-            </SecondHand>
-        </AnalogClock>
+        <!-- Выбор стиля стрелок (IDs 0..4 напрямую через ListConfiguration) -->
+        <ListConfiguration id="hands_style">
+            <ListOption id="0">
+                <AnalogClock x="0" y="0" width="450" height="450">
+                    <HourHand resource="h_pixel_h" x="215" y="115" width="20" height="130" pivotX="0.5" pivotY="0.846" />
+                    <MinuteHand resource="h_pixel_m" x="217" y="70" width="16" height="180" pivotX="0.5" pivotY="0.861" />
+                    <SecondHand resource="h_pixel_s" x="221" y="50" width="8" height="210" pivotX="0.5" pivotY="0.833">
+                        <Variant mode="AMBIENT" target="alpha" value="0" />
+                    </SecondHand>
+                </AnalogClock>
+            </ListOption>
+            <ListOption id="1">
+                <AnalogClock x="0" y="0" width="450" height="450">
+                    <HourHand resource="h_sword_h" x="215" y="115" width="20" height="130" pivotX="0.5" pivotY="0.846" />
+                    <MinuteHand resource="h_sword_m" x="217" y="70" width="16" height="180" pivotX="0.5" pivotY="0.861" />
+                    <SecondHand resource="h_sword_s" x="221" y="50" width="8" height="210" pivotX="0.5" pivotY="0.833">
+                        <Variant mode="AMBIENT" target="alpha" value="0" />
+                    </SecondHand>
+                </AnalogClock>
+            </ListOption>
+            <ListOption id="2">
+                <AnalogClock x="0" y="0" width="450" height="450">
+                    <HourHand resource="h_classic_h" x="215" y="115" width="20" height="130" pivotX="0.5" pivotY="0.846" />
+                    <MinuteHand resource="h_classic_m" x="217" y="70" width="16" height="180" pivotX="0.5" pivotY="0.861" />
+                    <SecondHand resource="h_classic_s" x="221" y="50" width="8" height="210" pivotX="0.5" pivotY="0.833">
+                        <Variant mode="AMBIENT" target="alpha" value="0" />
+                    </SecondHand>
+                </AnalogClock>
+            </ListOption>
+            <ListOption id="3">
+                <AnalogClock x="0" y="0" width="450" height="450">
+                    <HourHand resource="h_skel_h" x="215" y="115" width="20" height="130" pivotX="0.5" pivotY="0.846" />
+                    <MinuteHand resource="h_skel_m" x="217" y="70" width="16" height="180" pivotX="0.5" pivotY="0.861" />
+                    <SecondHand resource="h_skel_s" x="221" y="50" width="8" height="210" pivotX="0.5" pivotY="0.833">
+                        <Variant mode="AMBIENT" target="alpha" value="0" />
+                    </SecondHand>
+                </AnalogClock>
+            </ListOption>
+            <ListOption id="4">
+                <AnalogClock x="0" y="0" width="450" height="450">
+                    <HourHand resource="h_needle_h" x="215" y="115" width="20" height="130" pivotX="0.5" pivotY="0.846" />
+                    <MinuteHand resource="h_needle_m" x="217" y="70" width="16" height="180" pivotX="0.5" pivotY="0.861" />
+                    <SecondHand resource="h_needle_s" x="221" y="50" width="8" height="210" pivotX="0.5" pivotY="0.833">
+                        <Variant mode="AMBIENT" target="alpha" value="0" />
+                    </SecondHand>
+                </AnalogClock>
+            </ListOption>
+        </ListConfiguration>
 
-        <!-- Центральная заклепка -->
-        <PartImage resource="hand_cap" x="216" y="216" width="18" height="18" />
+        <!-- Центральная заглушка оси стрелок -->
+        <PartImage x="215" y="215" width="20" height="20">
+            <Image resource="hand_cap" />
+        </PartImage>
 
     </Scene>
 </WatchFace>
