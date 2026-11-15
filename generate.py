@@ -46,8 +46,8 @@ android {
         applicationId = "com.jeremysteckling.facerrel.watchfacepush.shaclock"
         minSdk = 34
         targetSdk = 34
-        versionCode = 2
-        versionName = "2.0.0"
+        versionCode = 3
+        versionName = "3.0.0"
     }
 
     signingConfigs {
@@ -80,7 +80,7 @@ if os.path.exists("app/src/main/res"):
 os.makedirs("app/src/main/res/xml", exist_ok=True)
 os.makedirs("app/src/main/res/raw", exist_ok=True)
 os.makedirs("app/src/main/res/font", exist_ok=True)
-os.makedirs("app/src/main/res/drawable", exist_ok=True)
+os.makedirs("app/src/main/res/drawable-nodpi", exist_ok=True)
 os.makedirs("app/src/main/res/values", exist_ok=True)
 
 if os.path.exists("app/src/main/assets/minecraft.ttf"):
@@ -125,48 +125,102 @@ with open("app/src/main/res/xml/watch_face_info.xml", "w", encoding="utf-8") as 
 </WatchFaceInfo>
 """)
 
+# Функция создания валидного PNG из матрицы RGBA
+def save_png(filename, w, h, pixel_func):
+    raw = bytearray()
+    for y in range(h):
+        raw.append(0)
+        for x in range(w):
+            r, g, b, a = pixel_func(x, y, w, h)
+            raw.extend((r, g, b, a))
+
+    def chunk(t, d):
+        return struct.pack("!I", len(d)) + t + d + struct.pack("!I", zlib.crc32(t + d) & 0xffffffff)
+
+    png = (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack("!IIBBBBB", w, h, 8, 6, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(bytes(raw), 9))
+        + chunk(b"IEND", b"")
+    )
+    with open(filename, "wb") as f:
+        f.write(png)
+
 # 8. Генерация preview.png (450x450)
-w, h = 450, 450
-raw = bytearray()
-for y in range(h):
-    raw.append(0)
-    for x in range(w):
-        d = math.hypot(x - 225, y - 225)
-        c = 255 if (215 <= d <= 222) else 0
-        raw.extend((c, c, c, 255))
+def preview_px(x, y, w, h):
+    d = math.hypot(x - 225, y - 225)
+    c = 255 if (215 <= d <= 222) else 0
+    return (c, c, c, 255 if c else 0)
 
-def chunk(t, d):
-    return struct.pack("!I", len(d)) + t + d + struct.pack("!I", zlib.crc32(t + d) & 0xffffffff)
+save_png("app/src/main/res/drawable-nodpi/preview.png", 450, 450, preview_px)
 
-png = (
-    b"\x89PNG\r\n\x1a\n"
-    + chunk(b"IHDR", struct.pack("!IIBBBBB", w, h, 8, 6, 0, 0, 0))
-    + chunk(b"IDAT", zlib.compress(bytes(raw), 9))
-    + chunk(b"IEND", b"")
-)
-with open("app/src/main/res/drawable/preview.png", "wb") as f:
-    f.write(png)
+# 9. Генерация наборов стрелок (Hour: 24x140, Minute: 16x200, Second: 8x220)
+# Стиль 1: Пиксельные (8-Bit Minecraft)
+save_png("app/src/main/res/drawable-nodpi/h_pixel_h.png", 24, 140, lambda x, y, w, h: (255, 255, 255, 255) if 4 <= x <= 19 and 8 <= y <= 130 else (0, 0, 0, 0))
+save_png("app/src/main/res/drawable-nodpi/h_pixel_m.png", 16, 200, lambda x, y, w, h: (255, 255, 255, 255) if 3 <= x <= 12 and 8 <= y <= 190 else (0, 0, 0, 0))
+save_png("app/src/main/res/drawable-nodpi/h_pixel_s.png", 8, 220, lambda x, y, w, h: (255, 59, 48, 255) if 2 <= x <= 5 and 5 <= y <= 210 else (0, 0, 0, 0))
 
-# 9. Точные расчеты для 12 надписей "ща" ближе к краю экрана
+# Стиль 2: Мечи (Дайверы с острием)
+def sword_h(x, y, w, h):
+    if y > 130 or y < 15: return (0, 0, 0, 0)
+    width_at_y = 10 if y > 35 else (x - 12 + (35 - y)*0.4)
+    return (255, 255, 255, 255) if abs(x - 12) <= (10 if y > 35 else (y - 15)*0.5) else (0, 0, 0, 0)
+save_png("app/src/main/res/drawable-nodpi/h_sword_h.png", 24, 140, sword_h)
+
+def sword_m(x, y, w, h):
+    if y > 190 or y < 15: return (0, 0, 0, 0)
+    return (255, 255, 255, 255) if abs(x - 8) <= (7 if y > 30 else (y - 15)*0.4) else (0, 0, 0, 0)
+save_png("app/src/main/res/drawable-nodpi/h_sword_m.png", 16, 200, sword_m)
+save_png("app/src/main/res/drawable-nodpi/h_sword_s.png", 8, 220, lambda x, y, w, h: (255, 204, 0, 255) if 2 <= x <= 5 and 5 <= y <= 210 else (0, 0, 0, 0))
+
+# Стиль 3: Минимализм (Батоны)
+save_png("app/src/main/res/drawable-nodpi/h_classic_h.png", 24, 140, lambda x, y, w, h: (255, 255, 255, 255) if 6 <= x <= 17 and 10 <= y <= 130 else (0, 0, 0, 0))
+save_png("app/src/main/res/drawable-nodpi/h_classic_m.png", 16, 200, lambda x, y, w, h: (255, 255, 255, 255) if 4 <= x <= 11 and 10 <= y <= 190 else (0, 0, 0, 0))
+save_png("app/src/main/res/drawable-nodpi/h_classic_s.png", 8, 220, lambda x, y, w, h: (255, 59, 48, 255) if 3 <= x <= 4 and 5 <= y <= 210 else (0, 0, 0, 0))
+
+# Стиль 4: Скелетоны (Полые рамки)
+def skel_h(x, y, w, h):
+    if 4 <= x <= 19 and 10 <= y <= 130:
+        if 7 <= x <= 16 and 20 <= y <= 115: return (0, 0, 0, 0)
+        return (255, 255, 255, 255)
+    return (0, 0, 0, 0)
+save_png("app/src/main/res/drawable-nodpi/h_skel_h.png", 24, 140, skel_h)
+
+def skel_m(x, y, w, h):
+    if 3 <= x <= 12 and 10 <= y <= 190:
+        if 5 <= x <= 10 and 20 <= y <= 175: return (0, 0, 0, 0)
+        return (255, 255, 255, 255)
+    return (0, 0, 0, 0)
+save_png("app/src/main/res/drawable-nodpi/h_skel_m.png", 16, 200, skel_m)
+save_png("app/src/main/res/drawable-nodpi/h_skel_s.png", 8, 220, lambda x, y, w, h: (0, 229, 255, 255) if 2 <= x <= 5 and 5 <= y <= 210 else (0, 0, 0, 0))
+
+# Стиль 5: Тонкие иглы
+save_png("app/src/main/res/drawable-nodpi/h_needle_h.png", 24, 140, lambda x, y, w, h: (255, 255, 255, 255) if 10 <= x <= 13 and 10 <= y <= 130 else (0, 0, 0, 0))
+save_png("app/src/main/res/drawable-nodpi/h_needle_m.png", 16, 200, lambda x, y, w, h: (255, 255, 255, 255) if 7 <= x <= 8 and 10 <= y <= 190 else (0, 0, 0, 0))
+save_png("app/src/main/res/drawable-nodpi/h_needle_s.png", 8, 220, lambda x, y, w, h: (255, 59, 48, 255) if 3 <= x <= 4 and 5 <= y <= 210 else (0, 0, 0, 0))
+
+# Центральная заглушка
+save_png("app/src/main/res/drawable-nodpi/hand_cap.png", 24, 24, lambda x, y, w, h: (255, 255, 255, 255) if math.hypot(x-12, y-12) <= 10 and math.hypot(x-12, y-12) >= 3 else (0, 0, 0, 0))
+
+# 10. Расчёт 12 надписей "ща" ближе к безелю (R=196px, безопасный отступ 13px)
 dial_marks = []
-radius = 184 # Отодвинуто ближе к краю (с запасом 21px до безеля)
+radius = 196
 for i in range(12):
     angle_deg = i * 30
     angle_rad = math.radians(angle_deg)
     cx = 225 + radius * math.sin(angle_rad)
     cy = 225 - radius * math.cos(angle_rad)
     
-    # Контейнер 70x44, центрируем вокруг расчетной точки (cx, cy)
     x = int(cx - 35)
     y = int(cy - 22)
     
     dial_marks.append(f"""            <PartText x="{x}" y="{y}" width="70" height="44">
                 <Text align="CENTER">
-                    <Font family="minecraft" size="32" color="#ffffffff" weight="NORMAL">ща</Font>
+                    <Font family="minecraft" size="33" color="#ffffffff" weight="NORMAL">ща</Font>
                 </Text>
             </PartText>""")
 
-# 10. Генерация watchface.xml через официальный тег <AnalogClock>
+# 11. watchface.xml со стрелками по спецификации WFF
 watchface_xml = f"""<?xml version="1.0" encoding="utf-8"?>
 <WatchFace width="450" height="450">
     <Metadata key="CLOCK_TYPE" value="ANALOG" />
@@ -184,121 +238,93 @@ watchface_xml = f"""<?xml version="1.0" encoding="utf-8"?>
 
     <Scene backgroundColor="#ff000000">
 
-        <!-- 12 одинаковых надписей "ща" по кругу -->
+        <!-- 12 надписей "ща" ближе к безелю -->
         <Group x="0" y="0" width="450" height="450">
 {chr(10).join(dial_marks)}
         </Group>
 
-        <!-- СТИЛЬ 1: Пиксельные стрелки (8-bit) -->
+        <!-- 1. Пиксельные стрелки -->
         <Condition>
             <Expressions>
                 <Expression name="is_pixel">[CONFIGURATION.hands_style] == 'pixel'</Expression>
             </Expressions>
             <Compare expression="is_pixel">
                 <AnalogClock x="0" y="0" width="450" height="450">
-                    <HourHand x="219" y="115" width="12" height="110" pivotX="0.5" pivotY="1.0">
-                        <Line startX="6" startY="0" endX="6" endY="110" color="#ffffffff" strokeWidth="12" strokeCap="SQUARE" />
-                    </HourHand>
-                    <MinuteHand x="221" y="65" width="8" height="160" pivotX="0.5" pivotY="1.0">
-                        <Line startX="4" startY="0" endX="4" endY="160" color="#ffffffff" strokeWidth="8" strokeCap="SQUARE" />
-                    </MinuteHand>
-                    <SecondHand x="223" y="55" width="4" height="170" pivotX="0.5" pivotY="1.0">
+                    <HourHand resource="h_pixel_h" x="213" y="105" width="24" height="140" pivotX="0.5" pivotY="0.857" />
+                    <MinuteHand resource="h_pixel_m" x="217" y="45" width="16" height="200" pivotX="0.5" pivotY="0.9" />
+                    <SecondHand resource="h_pixel_s" x="221" y="25" width="8" height="220" pivotX="0.5" pivotY="0.909">
                         <Variant mode="AMBIENT" target="alpha" value="0" />
-                        <Line startX="2" startY="0" endX="2" endY="170" color="#ffff3b30" strokeWidth="4" strokeCap="SQUARE" />
                     </SecondHand>
                 </AnalogClock>
             </Compare>
         </Condition>
 
-        <!-- СТИЛЬ 2: Стрелки-мечи (Дайвер) -->
+        <!-- 2. Мечи -->
         <Condition>
             <Expressions>
                 <Expression name="is_sword">[CONFIGURATION.hands_style] == 'sword'</Expression>
             </Expressions>
             <Compare expression="is_sword">
                 <AnalogClock x="0" y="0" width="450" height="450">
-                    <HourHand x="217" y="110" width="16" height="115" pivotX="0.5" pivotY="1.0">
-                        <Line startX="8" startY="0" endX="8" endY="115" color="#ffffffff" strokeWidth="16" strokeCap="ROUND" />
-                    </HourHand>
-                    <MinuteHand x="220" y="55" width="10" height="170" pivotX="0.5" pivotY="1.0">
-                        <Line startX="5" startY="0" endX="5" endY="170" color="#ffffffff" strokeWidth="10" strokeCap="ROUND" />
-                    </MinuteHand>
-                    <SecondHand x="223" y="45" width="4" height="180" pivotX="0.5" pivotY="1.0">
+                    <HourHand resource="h_sword_h" x="213" y="105" width="24" height="140" pivotX="0.5" pivotY="0.857" />
+                    <MinuteHand resource="h_sword_m" x="217" y="45" width="16" height="200" pivotX="0.5" pivotY="0.9" />
+                    <SecondHand resource="h_sword_s" x="221" y="25" width="8" height="220" pivotX="0.5" pivotY="0.909">
                         <Variant mode="AMBIENT" target="alpha" value="0" />
-                        <Line startX="2" startY="0" endX="2" endY="180" color="#ffffcc00" strokeWidth="4" strokeCap="ROUND" />
                     </SecondHand>
                 </AnalogClock>
             </Compare>
         </Condition>
 
-        <!-- СТИЛЬ 3: Классический минимализм -->
+        <!-- 3. Минимализм -->
         <Condition>
             <Expressions>
                 <Expression name="is_classic">[CONFIGURATION.hands_style] == 'classic'</Expression>
             </Expressions>
             <Compare expression="is_classic">
                 <AnalogClock x="0" y="0" width="450" height="450">
-                    <HourHand x="220" y="125" width="10" height="100" pivotX="0.5" pivotY="1.0">
-                        <Line startX="5" startY="0" endX="5" endY="100" color="#ffffffff" strokeWidth="10" strokeCap="ROUND" />
-                    </HourHand>
-                    <MinuteHand x="222" y="70" width="6" height="155" pivotX="0.5" pivotY="1.0">
-                        <Line startX="3" startY="0" endX="3" endY="155" color="#ffffffff" strokeWidth="6" strokeCap="ROUND" />
-                    </MinuteHand>
-                    <SecondHand x="224" y="60" width="2" height="165" pivotX="0.5" pivotY="1.0">
+                    <HourHand resource="h_classic_h" x="213" y="105" width="24" height="140" pivotX="0.5" pivotY="0.857" />
+                    <MinuteHand resource="h_classic_m" x="217" y="45" width="16" height="200" pivotX="0.5" pivotY="0.9" />
+                    <SecondHand resource="h_classic_s" x="221" y="25" width="8" height="220" pivotX="0.5" pivotY="0.909">
                         <Variant mode="AMBIENT" target="alpha" value="0" />
-                        <Line startX="1" startY="0" endX="1" endY="165" color="#ffff3b30" strokeWidth="2" strokeCap="ROUND" />
                     </SecondHand>
                 </AnalogClock>
             </Compare>
         </Condition>
 
-        <!-- СТИЛЬ 4: Скелетоны -->
+        <!-- 4. Скелетоны -->
         <Condition>
             <Expressions>
                 <Expression name="is_skeleton">[CONFIGURATION.hands_style] == 'skeleton'</Expression>
             </Expressions>
             <Compare expression="is_skeleton">
                 <AnalogClock x="0" y="0" width="450" height="450">
-                    <HourHand x="218" y="115" width="14" height="110" pivotX="0.5" pivotY="1.0">
-                        <RoundRectangle x="0" y="0" width="14" height="110" cornerRadiusX="4" cornerRadiusY="4" color="#00000000" strokeWidth="3" strokeColor="#ffffffff" />
-                    </HourHand>
-                    <MinuteHand x="220" y="60" width="10" height="165" pivotX="0.5" pivotY="1.0">
-                        <RoundRectangle x="0" y="0" width="10" height="165" cornerRadiusX="3" cornerRadiusY="3" color="#00000000" strokeWidth="3" strokeColor="#ffffffff" />
-                    </MinuteHand>
-                    <SecondHand x="224" y="50" width="2" height="175" pivotX="0.5" pivotY="1.0">
+                    <HourHand resource="h_skel_h" x="213" y="105" width="24" height="140" pivotX="0.5" pivotY="0.857" />
+                    <MinuteHand resource="h_skel_m" x="217" y="45" width="16" height="200" pivotX="0.5" pivotY="0.9" />
+                    <SecondHand resource="h_skel_s" x="221" y="25" width="8" height="220" pivotX="0.5" pivotY="0.909">
                         <Variant mode="AMBIENT" target="alpha" value="0" />
-                        <Line startX="1" startY="0" endX="1" endY="175" color="#ff00e5ff" strokeWidth="3" strokeCap="ROUND" />
                     </SecondHand>
                 </AnalogClock>
             </Compare>
         </Condition>
 
-        <!-- СТИЛЬ 5: Тонкие иглы -->
+        <!-- 5. Тонкие иглы -->
         <Condition>
             <Expressions>
                 <Expression name="is_needle">[CONFIGURATION.hands_style] == 'needle'</Expression>
             </Expressions>
             <Compare expression="is_needle">
                 <AnalogClock x="0" y="0" width="450" height="450">
-                    <HourHand x="223" y="120" width="4" height="105" pivotX="0.5" pivotY="1.0">
-                        <Line startX="2" startY="0" endX="2" endY="105" color="#ffffffff" strokeWidth="4" strokeCap="ROUND" />
-                    </HourHand>
-                    <MinuteHand x="223" y="60" width="4" height="165" pivotX="0.5" pivotY="1.0">
-                        <Line startX="2" startY="0" endX="2" endY="165" color="#ffffffff" strokeWidth="3" strokeCap="ROUND" />
-                    </MinuteHand>
-                    <SecondHand x="224" y="50" width="2" height="175" pivotX="0.5" pivotY="1.0">
+                    <HourHand resource="h_needle_h" x="213" y="105" width="24" height="140" pivotX="0.5" pivotY="0.857" />
+                    <MinuteHand resource="h_needle_m" x="217" y="45" width="16" height="200" pivotX="0.5" pivotY="0.9" />
+                    <SecondHand resource="h_needle_s" x="221" y="25" width="8" height="220" pivotX="0.5" pivotY="0.909">
                         <Variant mode="AMBIENT" target="alpha" value="0" />
-                        <Line startX="1" startY="0" endX="1" endY="175" color="#ffff3b30" strokeWidth="2" strokeCap="ROUND" />
                     </SecondHand>
                 </AnalogClock>
             </Compare>
         </Condition>
 
-        <!-- Центральная точка (ось стрелок) -->
-        <PartDraw x="217" y="217" width="16" height="16">
-            <RoundRectangle x="0" y="0" width="16" height="16" cornerRadiusX="8" cornerRadiusY="8" color="#ffffffff" />
-            <RoundRectangle x="4" y="4" width="8" height="8" cornerRadiusX="4" cornerRadiusY="4" color="#ff000000" />
-        </PartDraw>
+        <!-- Центральная заглушка оси стрелок -->
+        <PartImage resource="hand_cap" x="213" y="213" width="24" height="24" />
 
     </Scene>
 </WatchFace>
