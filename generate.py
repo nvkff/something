@@ -166,14 +166,14 @@ rootProject.name = "MinecraftCompass"
 include(":app")
 """)
 
-# 3. gradle.properties (обязателен для AndroidX / androidx.wear:wear)
+# 3. gradle.properties
 with open("gradle.properties", "w", encoding="utf-8") as f:
     f.write("""org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
 android.useAndroidX=true
 android.nonTransitiveRClass=true
 """)
 
-# 4. app/build.gradle.kts (подключаем androidx.wear:wear для Ambient / AOD)
+# 4. app/build.gradle.kts
 os.makedirs("app", exist_ok=True)
 with open("app/build.gradle.kts", "w", encoding="utf-8") as f:
     f.write("""plugins {
@@ -228,7 +228,7 @@ dependencies {
 }
 """)
 
-# 5. Очистка старых папок и подготовка новых
+# 5. Очистка и создание папок
 if os.path.exists("app/src/main/java"):
     shutil.rmtree("app/src/main/java")
 if os.path.exists("app/src/main/res"):
@@ -246,7 +246,7 @@ with open("app/src/main/res/values/strings.xml", "w", encoding="utf-8") as f:
 </resources>
 """)
 
-# 7. AndroidManifest.xml (WAKE_LOCK + wearable library для поддержки AOD)
+# 7. AndroidManifest.xml
 with open("app/src/main/AndroidManifest.xml", "w", encoding="utf-8") as f:
     f.write("""<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -337,7 +337,7 @@ with zipfile.ZipFile(jar_path, "r") as zf:
 
 write_png_rgba("app/src/main/res/drawable-nodpi/ic_launcher.png", 192, 192, icon_pixels)
 
-# 9. MainActivity.kt (AOD через AmbientLifecycleObserver + Магнетит GPS + Ручной ввод по двойному тапу)
+# 9. MainActivity.kt (исправлены Array<String> и 0xAAEA80FC.toInt())
 angles_str = ", ".join(f"{a}f" for a in frame_angles)
 res_list_str = ",\n        ".join(f"R.drawable.compass_{k:02d}" for k in range(32))
 
@@ -410,7 +410,6 @@ class MainActivity : ComponentActivity(), SensorEventListener, LocationListener 
     private var isAmbient = false
     private var lastAmbientDrawMs = 0L
 
-    // Механика Магнетита (GPS + ручной ввод + сохранение)
     private var isLodestoneActive = false
     private var pendingGpsLock = false
     private var currentLocation: Location? = null
@@ -535,7 +534,8 @@ class MainActivity : ComponentActivity(), SensorEventListener, LocationListener 
         return if (a.time >= b.time) a else b
     }}
 
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {{
+    @Deprecated("Deprecated in Java")
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {{
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == 100 && hasLocationPermission()) {{
             startLocationIfPermitted()
@@ -763,7 +763,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, LocationListener 
             intArrayOf(
                 0x145500AA,
                 0x458E24FF,
-                0xAAEA80FC,
+                0xAAEA80FC.toInt(),
                 0x458E24FF,
                 0x145500AA
             ),
