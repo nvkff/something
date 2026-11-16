@@ -6,12 +6,17 @@ import urllib.request
 import subprocess
 import shutil
 
-# 0. Устанавливаем Pillow для точного пиксельного масштабирования без мыла (NEAREST)
+# 0. Устанавливаем Pillow (с учётом Ubuntu 24.04 PEP 668 --break-system-packages)
 try:
     from PIL import Image
 except ImportError:
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "pillow"])
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "--break-system-packages", "-q", "pillow"])
+    except Exception:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "pillow"])
     from PIL import Image
+
+NEAREST = getattr(Image, "Resampling", Image).NEAREST
 
 # 1. Корневой build.gradle.kts
 with open("build.gradle.kts", "w", encoding="utf-8") as f:
@@ -158,7 +163,7 @@ with zipfile.ZipFile(jar_path, "r") as zf:
         with zf.open(entry) as src:
             img = Image.open(src).convert("RGBA")
             # Масштабируем 16x16 -> 448x448 строго без сглаживания (NEAREST)
-            scaled = img.resize((448, 448), Image.Resampling.NEAREST)
+            scaled = img.resize((448, 448), NEAREST)
             scaled.save(f"app/src/main/res/drawable/clock_{k:02d}.png")
 
 # Создаем preview.png (450x450, черный фон + clock_00 по центру)
