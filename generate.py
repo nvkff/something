@@ -138,7 +138,7 @@ def upscale_nearest(pixels, src_w, src_h, dst_w, dst_h):
         out.append([srow[(x * src_w) // dst_w] for x in range(dst_w)])
     return out
 
-# 1. Корневой build.gradle.kts (подключаем Kotlin для работы с датчиками)
+# 1. Корневой build.gradle.kts
 with open("build.gradle.kts", "w", encoding="utf-8") as f:
     f.write("""plugins {
     id("com.android.application") version "8.4.1" apply false
@@ -166,7 +166,14 @@ rootProject.name = "MinecraftCompass"
 include(":app")
 """)
 
-# 3. app/build.gradle.kts (Отдельное приложение под Wear OS)
+# 3. gradle.properties (обязателен для AndroidX / androidx.wear:wear)
+with open("gradle.properties", "w", encoding="utf-8") as f:
+    f.write("""org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+android.useAndroidX=true
+android.nonTransitiveRClass=true
+""")
+
+# 4. app/build.gradle.kts (подключаем androidx.wear:wear для Ambient / AOD)
 os.makedirs("app", exist_ok=True)
 with open("app/build.gradle.kts", "w", encoding="utf-8") as f:
     f.write("""plugins {
@@ -182,8 +189,8 @@ android {
         applicationId = "com.minecraft.compassapp"
         minSdk = 30
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 3
+        versionName = "3.0.0"
     }
 
     signingConfigs {
@@ -214,9 +221,14 @@ android {
         jvmTarget = "17"
     }
 }
+
+dependencies {
+    implementation("androidx.wear:wear:1.3.0")
+    implementation("androidx.activity:activity-ktx:1.9.0")
+}
 """)
 
-# 4. Очистка старых папок и подготовка новых
+# 5. Очистка старых папок и подготовка новых
 if os.path.exists("app/src/main/java"):
     shutil.rmtree("app/src/main/java")
 if os.path.exists("app/src/main/res"):
@@ -226,7 +238,7 @@ os.makedirs("app/src/main/res/drawable-nodpi", exist_ok=True)
 os.makedirs("app/src/main/res/values", exist_ok=True)
 os.makedirs("app/src/main/java/com/minecraft/compassapp", exist_ok=True)
 
-# 5. res/values/strings.xml
+# 6. res/values/strings.xml
 with open("app/src/main/res/values/strings.xml", "w", encoding="utf-8") as f:
     f.write("""<?xml version="1.0" encoding="utf-8"?>
 <resources>
@@ -234,7 +246,7 @@ with open("app/src/main/res/values/strings.xml", "w", encoding="utf-8") as f:
 </resources>
 """)
 
-# 6. AndroidManifest.xml (Standalone Wear OS приложение)
+# 7. AndroidManifest.xml (WAKE_LOCK + wearable library для поддержки AOD)
 with open("app/src/main/AndroidManifest.xml", "w", encoding="utf-8") as f:
     f.write("""<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -242,10 +254,18 @@ with open("app/src/main/AndroidManifest.xml", "w", encoding="utf-8") as f:
     <uses-feature android:name="android.hardware.type.watch" />
     <uses-feature android:name="android.hardware.sensor.compass" android:required="false" />
 
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
     <application
         android:allowBackup="true"
         android:icon="@drawable/ic_launcher"
         android:label="@string/app_name">
+
+        <uses-library
+            android:name="com.google.android.wearable"
+            android:required="false" />
 
         <meta-data
             android:name="com.google.android.wearable.standalone"
@@ -254,6 +274,7 @@ with open("app/src/main/AndroidManifest.xml", "w", encoding="utf-8") as f:
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleInstance"
             android:label="@string/app_name"
             android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
             <intent-filter>
@@ -266,7 +287,7 @@ with open("app/src/main/AndroidManifest.xml", "w", encoding="utf-8") as f:
 </manifest>
 """)
 
-# 7. Скачивание 32 оригинальных текстур compass_00..compass_31 из Mojang client.jar
+# 8. Скачивание 32 оригинальных текстур compass_00..compass_31 из Mojang client.jar
 manifest_url = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
 with urllib.request.urlopen(manifest_url) as resp:
     manifest = json.loads(resp.read().decode("utf-8"))
@@ -292,7 +313,6 @@ with zipfile.ZipFile(jar_path, "r") as zf:
         raw_png = zf.read(entry)
         sw, sh, spixels = read_png_rgba(raw_png)
 
-        # Автоматически вычисляем точный угол красной стрелки (0° = Вверх, 90° = Вправо, 180° = Вниз)
         sum_x = 0.0
         sum_y = 0.0
         cx_center = (sw - 1) / 2.0
@@ -312,44 +332,68 @@ with zipfile.ZipFile(jar_path, "r") as zf:
         scaled = upscale_nearest(spixels, sw, sh, 448, 448)
         write_png_rgba(f"app/src/main/res/drawable-nodpi/compass_{k:02d}.png", 448, 448, scaled)
 
-        # Иконка приложения — кадр, смотрящий максимально вверх (Север)
         if icon_pixels is None or abs(angle) < 12 or abs(angle - 360) < 12:
             icon_pixels = upscale_nearest(spixels, sw, sh, 192, 192)
 
 write_png_rgba("app/src/main/res/drawable-nodpi/ic_launcher.png", 192, 192, icon_pixels)
 
-# 8. Генерация MainActivity.kt (магнитометр + плавная анимация + режим Магнетит)
+# 9. MainActivity.kt (AOD через AmbientLifecycleObserver + Магнетит GPS + Ручной ввод по двойному тапу)
 angles_str = ", ".join(f"{a}f" for a in frame_angles)
 res_list_str = ",\n        ".join(f"R.drawable.compass_{k:02d}" for k in range(32))
 
 kotlin_code = f"""package com.minecraft.compassapp
 
-import android.app.Activity
+import android.Manifest
+import android.app.AlertDialog
 import android.content.Context
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.LightingColorFilter
+import android.graphics.LinearGradient
+import android.graphics.Matrix
 import android.graphics.Paint
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
 import android.graphics.Rect
+import android.graphics.RectF
+import android.graphics.Shader
 import android.graphics.Typeface
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.location.Location
+import android.location.LocationListener
+import android.location.LocationManager
 import android.os.Bundle
+import android.text.InputType
 import android.view.GestureDetector
+import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.widget.Button
+import android.widget.EditText
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
+import android.widget.Toast
+import androidx.activity.ComponentActivity
+import androidx.wear.ambient.AmbientLifecycleObserver
+import java.util.Locale
 import kotlin.math.abs
+import kotlin.math.atan2
 import kotlin.math.roundToInt
 
-class MainActivity : Activity(), SensorEventListener {{
+class MainActivity : ComponentActivity(), SensorEventListener, LocationListener {{
 
     private lateinit var sensorManager: SensorManager
+    private lateinit var locationManager: LocationManager
+    private lateinit var ambientObserver: AmbientLifecycleObserver
+
     private var rotationSensor: Sensor? = null
     private var accelSensor: Sensor? = null
     private var magnetSensor: Sensor? = null
@@ -359,11 +403,21 @@ class MainActivity : Activity(), SensorEventListener {{
     private var hasGravity = false
     private var hasMagnet = false
 
+    private var hasFirstAzimuth = false
     private var rawAzimuth = 0f
     private var smoothAzimuth = 0f
-    private var lodestoneBearing: Float? = null
-    private var showOverlay = true
+    private var sensorAccuracy = SensorManager.SENSOR_STATUS_ACCURACY_HIGH
+    private var isAmbient = false
+    private var lastAmbientDrawMs = 0L
 
+    // Механика Магнетита (GPS + ручной ввод + сохранение)
+    private var isLodestoneActive = false
+    private var pendingGpsLock = false
+    private var currentLocation: Location? = null
+    private var lodestoneLocation: Location? = null
+    private var fallbackLodestoneBearing = 0f
+
+    private var showOverlay = true
     private lateinit var compassView: CompassView
 
     private val frameAngles = floatArrayOf({angles_str})
@@ -371,46 +425,150 @@ class MainActivity : Activity(), SensorEventListener {{
         {res_list_str}
     )
 
+    private val ambientCallback = object : AmbientLifecycleObserver.AmbientLifecycleCallback {{
+        override fun onEnterAmbient(ambientDetails: AmbientLifecycleObserver.AmbientDetails) {{
+            isAmbient = true
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            compassView.invalidate()
+        }}
+
+        override fun onUpdateAmbient() {{
+            compassView.invalidate()
+        }}
+
+        override fun onExitAmbient() {{
+            isAmbient = false
+            compassView.invalidate()
+        }}
+    }}
+
     override fun onCreate(savedInstanceState: Bundle?) {{
         super.onCreate(savedInstanceState)
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
+        ambientObserver = AmbientLifecycleObserver(this, mainExecutor, ambientCallback)
+        lifecycle.addObserver(ambientObserver)
 
         sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
+
         rotationSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
         if (rotationSensor == null) {{
             accelSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
             magnetSensor = sensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD)
         }}
 
+        loadSavedLodestone()
+
         compassView = CompassView(this)
         setContentView(compassView)
     }}
 
-    override fun onResume() {{
-        super.onResume()
+    override fun onStart() {{
+        super.onStart()
         rotationSensor?.let {{
             sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME)
         }} ?: run {{
             accelSensor?.let {{ sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME) }}
             magnetSensor?.let {{ sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME) }}
         }}
+        startLocationIfPermitted()
     }}
 
-    override fun onPause() {{
-        super.onPause()
+    override fun onStop() {{
+        super.onStop()
         sensorManager.unregisterListener(this)
+        locationManager.removeUpdates(this)
+    }}
+
+    private fun loadSavedLodestone() {{
+        val prefs = getSharedPreferences("mc_compass_prefs", Context.MODE_PRIVATE)
+        if (prefs.getBoolean("lodestone_active", false)) {{
+            val lat = prefs.getFloat("lodestone_lat", Float.NaN)
+            val lon = prefs.getFloat("lodestone_lon", Float.NaN)
+            if (!lat.isNaN() && !lon.isNaN()) {{
+                lodestoneLocation = Location("saved").apply {{
+                    latitude = lat.toDouble()
+                    longitude = lon.toDouble()
+                }}
+                isLodestoneActive = true
+                pendingGpsLock = false
+            }}
+        }}
+    }}
+
+    private fun saveLodestoneState(active: Boolean, loc: Location?) {{
+        val editor = getSharedPreferences("mc_compass_prefs", Context.MODE_PRIVATE).edit()
+        editor.putBoolean("lodestone_active", active && loc != null)
+        if (active && loc != null) {{
+            editor.putFloat("lodestone_lat", loc.latitude.toFloat())
+            editor.putFloat("lodestone_lon", loc.longitude.toFloat())
+        }}
+        editor.apply()
+    }}
+
+    private fun hasLocationPermission(): Boolean {{
+        return checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+            checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+    }}
+
+    private fun startLocationIfPermitted() {{
+        if (!hasLocationPermission()) return
+        try {{
+            val gpsLast = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+            val netLast = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+            val bestLast = pickBetterLocation(gpsLast, netLast)
+            if (bestLast != null) {{
+                currentLocation = bestLast
+            }}
+            if (locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {{
+                locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1500L, 1f, this)
+            }}
+            if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {{
+                locationManager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 2500L, 2f, this)
+            }}
+        }} catch (_: SecurityException) {{}}
+    }}
+
+    private fun pickBetterLocation(a: Location?, b: Location?): Location? {{
+        if (a == null) return b
+        if (b == null) return a
+        return if (a.time >= b.time) a else b
+    }}
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {{
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 100 && hasLocationPermission()) {{
+            startLocationIfPermitted()
+            if (pendingGpsLock && isLodestoneActive) {{
+                val loc = currentLocation
+                if (loc != null) {{
+                    lodestoneLocation = Location(loc)
+                    pendingGpsLock = false
+                    saveLodestoneState(true, lodestoneLocation)
+                }}
+            }}
+            compassView.invalidate()
+        }}
+    }}
+
+    override fun onLocationChanged(location: Location) {{
+        currentLocation = location
+        if (isLodestoneActive && pendingGpsLock) {{
+            lodestoneLocation = Location(location)
+            pendingGpsLock = false
+            saveLodestoneState(true, lodestoneLocation)
+        }}
+        if (!isAmbient) {{
+            compassView.postInvalidateOnAnimation()
+        }}
     }}
 
     override fun onSensorChanged(event: SensorEvent) {{
+        sensorAccuracy = event.accuracy
         if (event.sensor.type == Sensor.TYPE_ROTATION_VECTOR) {{
             val rMat = FloatArray(9)
-            val orientation = FloatArray(3)
             SensorManager.getRotationMatrixFromVector(rMat, event.values)
-            SensorManager.getOrientation(rMat, orientation)
-            var deg = Math.toDegrees(orientation[0].toDouble()).toFloat()
-            if (deg < 0f) deg += 360f
-            rawAzimuth = deg
-            compassView.postInvalidateOnAnimation()
+            applyRotationMatrix(rMat)
         }} else if (event.sensor.type == Sensor.TYPE_ACCELEROMETER) {{
             System.arraycopy(event.values, 0, gravity, 0, 3)
             hasGravity = true
@@ -427,16 +585,39 @@ class MainActivity : Activity(), SensorEventListener {{
         val rMat = FloatArray(9)
         val iMat = FloatArray(9)
         if (SensorManager.getRotationMatrix(rMat, iMat, gravity, geomagnetic)) {{
-            val orientation = FloatArray(3)
-            SensorManager.getOrientation(rMat, orientation)
-            var deg = Math.toDegrees(orientation[0].toDouble()).toFloat()
-            if (deg < 0f) deg += 360f
-            rawAzimuth = deg
-            compassView.postInvalidateOnAnimation()
+            applyRotationMatrix(rMat)
         }}
     }}
 
-    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {{}}
+    private fun applyRotationMatrix(rMat: FloatArray) {{
+        val northX = rMat[3]
+        val northY = rMat[4]
+        if (northX * northX + northY * northY < 0.002f) return
+
+        val northScreenAngle = Math.toDegrees(atan2(northX.toDouble(), northY.toDouble())).toFloat()
+        val azimuth = (-northScreenAngle + 360f) % 360f
+
+        rawAzimuth = azimuth
+        if (!hasFirstAzimuth) {{
+            smoothAzimuth = azimuth
+            hasFirstAzimuth = true
+        }}
+
+        if (!isAmbient) {{
+            compassView.postInvalidateOnAnimation()
+        }} else {{
+            val now = System.currentTimeMillis()
+            if (now - lastAmbientDrawMs > 900L) {{
+                lastAmbientDrawMs = now
+                smoothAzimuth = rawAzimuth
+                compassView.invalidate()
+            }}
+        }}
+    }}
+
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {{
+        sensorAccuracy = accuracy
+    }}
 
     private fun shortestAngleDiff(from: Float, to: Float): Float {{
         var diff = (to - from) % 360f
@@ -451,6 +632,121 @@ class MainActivity : Activity(), SensorEventListener {{
         return dirs[idx]
     }}
 
+    private fun showManualCoordsDialog() {{
+        val dp = resources.displayMetrics.density
+        val padH = (26 * dp).toInt()
+        val padV = (18 * dp).toInt()
+
+        val container = LinearLayout(this).apply {{
+            orientation = LinearLayout.VERTICAL
+            setPadding(padH, padV, padH, padV)
+            setBackgroundColor(0xFF121212.toInt())
+        }}
+
+        val title = TextView(this).apply {{
+            text = "Координаты цели"
+            setTextColor(0xFFE89CFF.toInt())
+            textSize = 15f
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, (10 * dp).toInt())
+        }}
+        container.addView(title)
+
+        val prefill = lodestoneLocation ?: currentLocation
+        val numInputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL or InputType.TYPE_NUMBER_FLAG_SIGNED
+
+        val latInput = EditText(this).apply {{
+            hint = "Широта (напр. 55.7558)"
+            inputType = numInputType
+            setTextColor(Color.WHITE)
+            setHintTextColor(0xFF888888.toInt())
+            textSize = 14f
+            if (prefill != null) {{
+                setText(String.format(Locale.US, "%.5f", prefill.latitude))
+            }}
+        }}
+        container.addView(latInput)
+
+        val lonInput = EditText(this).apply {{
+            hint = "Долгота (напр. 37.6173)"
+            inputType = numInputType
+            setTextColor(Color.WHITE)
+            setHintTextColor(0xFF888888.toInt())
+            textSize = 14f
+            if (prefill != null) {{
+                setText(String.format(Locale.US, "%.5f", prefill.longitude))
+            }}
+        }}
+        container.addView(lonInput)
+
+        val btnRow = LinearLayout(this).apply {{
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(0, (12 * dp).toInt(), 0, (10 * dp).toInt())
+        }}
+
+        val btnReset = Button(this).apply {{
+            text = "Сброс"
+            textSize = 12f
+        }}
+        val btnSave = Button(this).apply {{
+            text = "Ок"
+            textSize = 12f
+        }}
+        btnRow.addView(btnReset)
+        btnRow.addView(btnSave)
+        container.addView(btnRow)
+
+        val scroll = ScrollView(this).apply {{
+            addView(container)
+        }}
+
+        val dialog = AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_NoActionBar)
+            .setView(scroll)
+            .create()
+
+        btnReset.setOnClickListener {{
+            isLodestoneActive = false
+            pendingGpsLock = false
+            lodestoneLocation = null
+            saveLodestoneState(false, null)
+            compassView.invalidate()
+            dialog.dismiss()
+        }}
+
+        btnSave.setOnClickListener {{
+            val latStr = latInput.text.toString().trim().replace(',', '.')
+            val lonStr = lonInput.text.toString().trim().replace(',', '.')
+            val lat = latStr.toDoubleOrNull()
+            val lon = lonStr.toDoubleOrNull()
+            if (lat == null || lon == null || lat < -90.0 || lat > 90.0 || lon < -180.0 || lon > 180.0) {{
+                Toast.makeText(this, "Неверные координаты", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }}
+            val target = Location("manual").apply {{
+                latitude = lat
+                longitude = lon
+            }}
+            lodestoneLocation = target
+            isLodestoneActive = true
+            pendingGpsLock = false
+            saveLodestoneState(true, target)
+            if (!hasLocationPermission()) {{
+                requestPermissions(
+                    arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
+                    100
+                )
+            }} else {{
+                startLocationIfPermitted()
+            }}
+            compassView.resetAnim()
+            compassView.invalidate()
+            dialog.dismiss()
+        }}
+
+        dialog.show()
+    }}
+
     private inner class CompassView(context: Context) : View(context) {{
         private val opts = BitmapFactory.Options().apply {{ inScaled = false }}
         private val bitmaps: Array<Bitmap> = Array(32) {{ idx ->
@@ -462,7 +758,24 @@ class MainActivity : Activity(), SensorEventListener {{
             isAntiAlias = false
         }}
 
-        private val lodestoneFilter = LightingColorFilter(0xFFE0B0FF.toInt(), 0x00240044)
+        private val glintShader = LinearGradient(
+            0f, 0f, 180f, 110f,
+            intArrayOf(
+                0x145500AA,
+                0x458E24FF,
+                0xAAEA80FC,
+                0x458E24FF,
+                0x145500AA
+            ),
+            floatArrayOf(0f, 0.30f, 0.50f, 0.70f, 1f),
+            Shader.TileMode.REPEAT
+        )
+        private val glintMatrix = Matrix()
+        private val xferAtop = PorterDuffXfermode(PorterDuff.Mode.SRC_ATOP)
+        private val glintPaint = Paint().apply {{
+            shader = glintShader
+            xfermode = xferAtop
+        }}
 
         private val pixelFont: Typeface by lazy {{
             try {{
@@ -479,12 +792,18 @@ class MainActivity : Activity(), SensorEventListener {{
         }}
 
         private val shadowPaint = Paint().apply {{
-            color = 0xFF222222.toInt()
+            color = 0xFF1A1A1A.toInt()
             textAlign = Paint.Align.CENTER
             isAntiAlias = false
         }}
 
         private val dstRect = Rect()
+        private val dstRectF = RectF()
+        private var startAnimMs = System.currentTimeMillis()
+
+        fun resetAnim() {{
+            startAnimMs = System.currentTimeMillis()
+        }}
 
         private val gestureDetector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {{
             override fun onDown(e: MotionEvent): Boolean = true
@@ -495,9 +814,42 @@ class MainActivity : Activity(), SensorEventListener {{
                 return true
             }}
 
+            override fun onDoubleTap(e: MotionEvent): Boolean {{
+                showManualCoordsDialog()
+                return true
+            }}
+
             override fun onLongPress(e: MotionEvent) {{
                 performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-                lodestoneBearing = if (lodestoneBearing == null) smoothAzimuth else null
+                if (!isLodestoneActive) {{
+                    isLodestoneActive = true
+                    fallbackLodestoneBearing = smoothAzimuth
+                    startAnimMs = System.currentTimeMillis()
+
+                    if (!hasLocationPermission()) {{
+                        pendingGpsLock = true
+                        requestPermissions(
+                            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
+                            100
+                        )
+                    }} else {{
+                        startLocationIfPermitted()
+                        val loc = currentLocation
+                        if (loc != null && (System.currentTimeMillis() - loc.time) < 120000L) {{
+                            lodestoneLocation = Location(loc)
+                            pendingGpsLock = false
+                            saveLodestoneState(true, lodestoneLocation)
+                        }} else {{
+                            lodestoneLocation = null
+                            pendingGpsLock = true
+                        }}
+                    }}
+                }} else {{
+                    isLodestoneActive = false
+                    pendingGpsLock = false
+                    lodestoneLocation = null
+                    saveLodestoneState(false, null)
+                }}
                 invalidate()
             }}
         }})
@@ -511,20 +863,35 @@ class MainActivity : Activity(), SensorEventListener {{
             super.onDraw(canvas)
             canvas.drawColor(Color.BLACK)
 
-            // Плавная интерполяция угла
-            val diff = shortestAngleDiff(smoothAzimuth, rawAzimuth)
-            if (abs(diff) > 0.25f) {{
-                smoothAzimuth = (smoothAzimuth + diff * 0.22f + 360f) % 360f
-                postInvalidateOnAnimation()
+            if (!isAmbient) {{
+                val diff = shortestAngleDiff(smoothAzimuth, rawAzimuth)
+                if (abs(diff) > 0.25f) {{
+                    smoothAzimuth = (smoothAzimuth + diff * 0.22f + 360f) % 360f
+                    postInvalidateOnAnimation()
+                }} else {{
+                    smoothAzimuth = rawAzimuth
+                }}
             }} else {{
                 smoothAzimuth = rawAzimuth
             }}
 
-            // Целевой угол стрелки на экране (0° = Вверх)
-            val targetOffset = lodestoneBearing ?: 0f
-            val needleAngle = (targetOffset - smoothAzimuth + 720f) % 360f
+            var targetBearing = 0f
+            var distanceMeters: Float? = null
+            if (isLodestoneActive) {{
+                val targetLoc = lodestoneLocation
+                val curLoc = currentLocation
+                if (targetLoc != null && curLoc != null) {{
+                    var bearing = curLoc.bearingTo(targetLoc)
+                    if (bearing < 0f) bearing += 360f
+                    targetBearing = bearing
+                    distanceMeters = curLoc.distanceTo(targetLoc)
+                }} else {{
+                    targetBearing = fallbackLodestoneBearing
+                }}
+            }}
 
-            // Ищем ближайший из 32 оригинальных спрайтов Mojang
+            val needleAngle = (targetBearing - smoothAzimuth + 720f) % 360f
+
             var bestIdx = 0
             var bestDiff = 999f
             for (i in 0 until 32) {{
@@ -535,34 +902,67 @@ class MainActivity : Activity(), SensorEventListener {{
                 }}
             }}
 
-            // Рисуем квадрат по центру экрана
-            val size = (minOf(width, height) * 0.92f).toInt()
+            val size = (minOf(width, height) * 0.88f).toInt()
             val left = (width - size) / 2
             val top = (height - size) / 2
             dstRect.set(left, top, left + size, top + size)
+            dstRectF.set(dstRect)
 
-            imgPaint.colorFilter = if (lodestoneBearing != null) lodestoneFilter else null
-            canvas.drawBitmap(bitmaps[bestIdx], null, dstRect, imgPaint)
+            imgPaint.alpha = if (isAmbient) 110 else 255
+
+            if (isLodestoneActive && !isAmbient) {{
+                val saveId = canvas.saveLayer(dstRectF, null)
+                canvas.drawBitmap(bitmaps[bestIdx], null, dstRect, imgPaint)
+                val t = ((System.currentTimeMillis() - startAnimMs) % 2400L) / 2400f
+                val shift = t * 210f
+                glintMatrix.setTranslate(shift, shift * 0.6f)
+                glintShader.setLocalMatrix(glintMatrix)
+                canvas.drawRect(dstRectF, glintPaint)
+                canvas.restoreToCount(saveId)
+                postInvalidateOnAnimation()
+            }} else {{
+                canvas.drawBitmap(bitmaps[bestIdx], null, dstRect, imgPaint)
+            }}
 
             if (showOverlay) {{
                 textPaint.typeface = pixelFont
                 shadowPaint.typeface = pixelFont
-                val fontSize = width * 0.068f
+                val fontSize = width * 0.064f
                 textPaint.textSize = fontSize
                 shadowPaint.textSize = fontSize
+                val textAlpha = if (isAmbient) 130 else 255
 
-                val locked = lodestoneBearing
-                val label = if (locked != null) {{
-                    textPaint.color = 0xFFD99BFF.toInt()
-                    "МАГНЕТИТ ${{locked.roundToInt()}}°"
+                val label = if (isLodestoneActive) {{
+                    textPaint.color = 0xFFE89CFF.toInt()
+                    val dist = distanceMeters
+                    if (dist != null) {{
+                        val distStr = if (dist >= 1000f) String.format(Locale.US, "%.1f км", dist / 1000f) else "${{dist.roundToInt()}} м"
+                        "МАГНЕТИТ · $distStr"
+                    }} else if (pendingGpsLock) {{
+                        "МАГНЕТИТ · ПОИСК GPS"
+                    }} else if (lodestoneLocation != null) {{
+                        "МАГНЕТИТ · ПОИСК GPS"
+                    }} else {{
+                        "МАГНЕТИТ"
+                    }}
                 }} else {{
-                    textPaint.color = Color.WHITE
-                    val degInt = smoothAzimuth.roundToInt() % 360
-                    "${{cardinalRu(smoothAzimuth)}} ${{degInt}}°"
+                    if (sensorAccuracy <= SensorManager.SENSOR_STATUS_ACCURACY_LOW && !isAmbient) {{
+                        textPaint.color = 0xFFFFD54F.toInt()
+                        "ПОКРУТИ (8)"
+                    }} else {{
+                        textPaint.color = Color.WHITE
+                        val degInt = smoothAzimuth.roundToInt() % 360
+                        "${{cardinalRu(smoothAzimuth)}} ${{degInt}}°"
+                    }}
                 }}
 
-                val ty = height * 0.86f
-                canvas.drawText(label, width / 2f + 2f, ty + 2f, shadowPaint)
+                textPaint.alpha = textAlpha
+                shadowPaint.alpha = textAlpha
+
+                val ty = height * 0.88f
+                if (!isAmbient) {{
+                    canvas.drawText(label, width / 2f + 2f, ty + 2f, shadowPaint)
+                }}
                 canvas.drawText(label, width / 2f, ty, textPaint)
             }}
         }}
