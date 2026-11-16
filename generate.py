@@ -346,10 +346,10 @@ watchface_xml = f"""<?xml version="1.0" encoding="utf-8"?>
             <ListOption id="1">
                 <Group x="0" y="0" width="450" height="450">
                     <DigitalClock x="125" y="290" width="200" height="58">
-                        <TimeText x="3" y="3" width="194" height="52" format="HH:mm" hourFormat="24" align="CENTER">
+                        <TimeText x="3" y="3" width="194" height="52" format="hh:mm" hourFormat="24" align="CENTER">
                             <Font family="minecraft" size="34" color="#ff3a2204" />
                         </TimeText>
-                        <TimeText x="0" y="0" width="194" height="52" format="HH:mm" hourFormat="24" align="CENTER">
+                        <TimeText x="0" y="0" width="194" height="52" format="hh:mm" hourFormat="24" align="CENTER">
                             <Font family="minecraft" size="34" color="#ffffffff" />
                         </TimeText>
                     </DigitalClock>
