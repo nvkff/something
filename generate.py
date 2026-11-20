@@ -96,7 +96,6 @@ with open("app/src/main/res/values/strings.xml", "w", encoding="utf-8") as f:
 </resources>
 ''')
 
-# Оригинальный манифест (из версии DeepSeek)
 with open("app/src/main/AndroidManifest.xml", "w", encoding="utf-8") as f:
     f.write(f'''<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -105,7 +104,8 @@ with open("app/src/main/AndroidManifest.xml", "w", encoding="utf-8") as f:
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_HEALTH" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.INTERNET" />
     
     <application
@@ -130,7 +130,7 @@ with open("app/src/main/AndroidManifest.xml", "w", encoding="utf-8") as f:
         <service
             android:name=".TrackingService"
             android:exported="false"
-            android:foregroundServiceType="dataSync" />
+            android:foregroundServiceType="health" />
     </application>
 </manifest>
 ''')
@@ -162,7 +162,7 @@ def icon_pixel(x, y, w, h):
 
 save_png("app/src/main/res/drawable/ic_launcher.png", 192, 192, icon_pixel)
 
-# ─── 4. TrackingService.kt (Архитектура DeepSeek + 1sec троттлинг) ───
+# ─── 4. TrackingService.kt ───
 service_code = f'''package {PKG}
 
 import android.app.Notification
@@ -178,6 +178,7 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import android.util.Base64
 import org.json.JSONArray
 import org.json.JSONObject
@@ -190,6 +191,7 @@ import kotlin.math.sqrt
 
 class TrackingService : Service(), SensorEventListener {{
     private lateinit var sm: SensorManager
+    private var wakeLock: PowerManager.WakeLock? = null
     
     private var isRecording = false
     private var startTs = 0L
@@ -227,6 +229,10 @@ class TrackingService : Service(), SensorEventListener {{
 
     private fun startTracking() {{
         if (isRecording) return
+        
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "FourThirty::BackgroundTracking")
+        wakeLock?.acquire(2L * 60L * 60L * 1000L) 
         
         isRecording = true
         startTs = System.currentTimeMillis()
@@ -266,6 +272,9 @@ class TrackingService : Service(), SensorEventListener {{
         isRecording = false
         currentStartTs = 0L
         sm.unregisterListener(this)
+        
+        try {{ wakeLock?.takeIf {{ it.isHeld }}?.release() }} catch (_: Exception) {{}}
+        wakeLock = null
         
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -369,7 +378,6 @@ class TrackingService : Service(), SensorEventListener {{
             Sensor.TYPE_STEP_COUNTER -> {{ lastStep = event.values[0].toInt() }}
         }}
         
-        // Лимитируем обновление уведомления до 1 раза в секунду
         if (now - lastNotificationMs >= 1000L) {{
             lastNotificationMs = now
             val elapsed = ((now - startTs) / 1000L).toInt()
@@ -448,7 +456,7 @@ class TrackingService : Service(), SensorEventListener {{
 with open(f"app/src/main/java/{PKG.replace('.', '/')}/TrackingService.kt", "w", encoding="utf-8") as f:
     f.write(service_code)
 
-# ─── 5. MainActivity.kt (GestureDetector + AmbientLifecycleObserver) ───
+# ─── 5. MainActivity.kt ───
 main_activity_code = f'''package {PKG}
 
 import android.content.Context
@@ -524,7 +532,8 @@ class MainActivity : ComponentActivity() {{
         }}
     }}
     
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {{
+    // ИСПРАВЛЕНА ОШИБКА: Array<String> вместо Array<out String>
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {{
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         setupUI()
     }}
@@ -589,7 +598,6 @@ class MainActivity : ComponentActivity() {{
         private val screens = arrayOf("Главная", "Цифры", "История", "Ещё")
         private var toastTxt = ""; private var toastUntil = 0L
 
-        // Используем встроенный GestureDetector как в for-smart-watch.md!
         private val gestureDetector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {{
             override fun onDown(e: MotionEvent): Boolean = true
 
@@ -616,18 +624,15 @@ class MainActivity : ComponentActivity() {{
 
         private fun handleTap(x: Float, y: Float) {{
             val w = width.toFloat()
-            // Зоны по 30% слева и справа строго для навигации
             if (x < w * 0.30f) {{
                 if (screen > 0) {{ screen--; invalidate(); performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) }}
             }} else if (x > w * 0.70f) {{
                 if (screen < screens.size - 1) {{ screen++; invalidate(); performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) }}
             }} else {{
-                // Центральная зона (40%)
                 if (screen == 0) {{
                     val cx = w / 2f
                     val cy = height / 2f - 20f
                     val r = w * 0.27f
-                    // Действие ТОЛЬКО если тапнули внутрь круга, а не просто где-то по центру экрана
                     if (hypot(x - cx, y - cy) <= r * 1.3f) {{
                         performHapticFeedback(HapticFeedbackConstants.CONFIRM)
                         toggleTracking()
