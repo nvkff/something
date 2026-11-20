@@ -9,8 +9,8 @@ PKG = "com.opw.fourthirty"
 APP_LABEL = "4:30"
 # Вставь сюда URL своего воркера и пароль, когда задеплоишь его. 
 # Пока можно оставить пустым, синхронизация будет работать локально.
-WORKER_URL = ""  
-AUTH_PASS = ""  
+WORKER_URL = "https://fourthirty.pvo.workers.dev/"  
+AUTH_PASS = "Bebroslav"  
 
 # ─── 1. Gradle-обвязка ───
 with open("build.gradle.kts", "w", encoding="utf-8") as f:
