@@ -7,10 +7,8 @@ import shutil
 # ─── НАСТРОЙКИ ───
 PKG = "com.opw.fourthirty"
 APP_LABEL = "4:30"
-# Вставь сюда URL своего воркера и пароль, когда задеплоишь его. 
-# Если оставить пустыми, приложение будет работать полностью локально.
-WORKER_URL = "https://fourthirty.pvo.workers.dev/"  
-AUTH_PASS = "Bebroslav"  
+WORKER_URL = ""  
+AUTH_PASS = ""  
 
 # ─── 1. Gradle-обвязка ───
 with open("build.gradle.kts", "w", encoding="utf-8") as f:
@@ -88,7 +86,7 @@ dependencies {{
 for p in ("app/src/main/java", "app/src/main/res"):
     if os.path.exists(p): shutil.rmtree(p)
 os.makedirs(f"app/src/main/java/{PKG.replace('.', '/')}", exist_ok=True)
-os.makedirs("app/src/main/res/drawable-nodpi", exist_ok=True)
+os.makedirs("app/src/main/res/drawable", exist_ok=True)
 os.makedirs("app/src/main/res/values", exist_ok=True)
 
 with open("app/src/main/res/values/strings.xml", "w", encoding="utf-8") as f:
@@ -106,7 +104,8 @@ with open("app/src/main/AndroidManifest.xml", "w", encoding="utf-8") as f:
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_HEALTH" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.INTERNET" />
     
     <application
@@ -131,12 +130,12 @@ with open("app/src/main/AndroidManifest.xml", "w", encoding="utf-8") as f:
         <service
             android:name=".TrackingService"
             android:exported="false"
-            android:foregroundServiceType="dataSync" />
+            android:foregroundServiceType="health" />
     </application>
 </manifest>
 ''')
 
-# ─── 3. Генерация иконки (4:30) ───
+# ─── 3. Генерация иконки ───
 def save_png(filename, w, h, pixel_func):
     raw = bytearray()
     for y in range(h):
@@ -158,13 +157,12 @@ def icon_pixel(x, y, w, h):
     if d > 90: return (0, 0, 0, 0)
     if d > 82: return (232, 156, 208, 255)
     if d > 80: return (38, 38, 38, 255)
-    # Рисуем "4:30" упрощённо
     if 88 <= x <= 104 and 88 <= y <= 104: return (255, 255, 255, 255)
     return (38, 38, 38, 255)
 
-save_png("app/src/main/res/drawable-nodpi/ic_launcher.png", 192, 192, icon_pixel)
+save_png("app/src/main/res/drawable/ic_launcher.png", 192, 192, icon_pixel)
 
-# ─── 4. TrackingService.kt (Фоновая запись) ───
+# ─── 4. TrackingService.kt ───
 service_code = f'''package {PKG}
 
 import android.app.Notification
@@ -174,15 +172,14 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.content.SharedPreferences
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import android.util.Base64
-import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -194,6 +191,8 @@ import kotlin.math.sqrt
 
 class TrackingService : Service(), SensorEventListener {{
     private lateinit var sm: SensorManager
+    private var wakeLock: PowerManager.WakeLock? = null
+    
     private var isRecording = false
     private var startTs = 0L
     private var lastHrSavedMs = 0L
@@ -229,6 +228,11 @@ class TrackingService : Service(), SensorEventListener {{
 
     private fun startTracking() {{
         if (isRecording) return
+        
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "FourThirty::BackgroundTracking")
+        wakeLock?.acquire(2L * 60L * 60L * 1000L) 
+        
         isRecording = true
         startTs = System.currentTimeMillis()
         lastHrSavedMs = 0L
@@ -257,14 +261,17 @@ class TrackingService : Service(), SensorEventListener {{
             }}
         }}
         
-        val notification = buildNotification(0)
-        startForeground(1, notification)
+        startForeground(1, buildNotification(0))
     }}
 
     private fun stopTracking() {{
         if (!isRecording) return
         isRecording = false
         sm.unregisterListener(this)
+        
+        try {{ wakeLock?.takeIf {{ it.isHeld }}?.release() }} catch (_: Exception) {{}}
+        wakeLock = null
+        
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
         
@@ -304,28 +311,32 @@ class TrackingService : Service(), SensorEventListener {{
         val raw = prefs.getString("sessions", "[]") ?: "[]"
         val arr = JSONArray(raw)
         arr.put(session)
-        prefs.edit().putString("sessions", arr.toString()).apply()
+        val jsonStr = arr.toString()
+        prefs.edit().putString("sessions", jsonStr).apply()
         
         try {{
             val dir = getExternalFilesDir(null)
-            if (dir != null) File(dir, "430.json").writeText(arr.toString())
+            if (dir != null) File(dir, "430.json").writeText(jsonStr)
         }} catch (_: Exception) {{}}
         
-        uploadToWorker(arr.toString())
+        uploadToWorker(jsonStr)
     }}
 
     private fun uploadToWorker(json: String) {{
-        if ("{WORKER_URL}".isEmpty() || "{WORKER_URL}" == "WORKER_URL_PLACEHOLDER") return
+        val url = "{WORKER_URL}"
+        val pass = "{AUTH_PASS}"
+        if (url.isEmpty() || url == "WORKER_URL_PLACEHOLDER") return
+        
         Thread {{
             try {{
-                val conn = URL("{WORKER_URL}/upload").openConnection() as HttpURLConnection
+                val conn = URL("$url/upload").openConnection() as HttpURLConnection
                 conn.requestMethod = "POST"
                 conn.doOutput = true
-                conn.connectTimeout = 5000
-                conn.readTimeout = 5000
+                conn.connectTimeout = 7000
+                conn.readTimeout = 7000
                 conn.setRequestProperty("Content-Type", "application/json")
-                if ("{AUTH_PASS}".isNotEmpty()) {{
-                    conn.setRequestProperty("X-Auth", "{AUTH_PASS}")
+                if (pass.isNotEmpty()) {{
+                    conn.setRequestProperty("X-Auth", pass)
                 }}
                 conn.outputStream.use {{ it.write(json.toByteArray()) }}
                 conn.responseCode
@@ -393,14 +404,11 @@ class TrackingService : Service(), SensorEventListener {{
 
     private fun createNotificationChannel() {{
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {{
-            val name = "4:30 Tracking"
-            val importance = NotificationManager.IMPORTANCE_LOW
-            val channel = NotificationChannel(CHANNEL_ID, name, importance).apply {{
+            val channel = NotificationChannel(CHANNEL_ID, "4:30 Tracking", NotificationManager.IMPORTANCE_LOW).apply {{
                 description = "Фоновая запись"
                 setShowBadge(false)
             }}
-            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            nm.createNotificationChannel(channel)
+            (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(channel)
         }}
     }}
 
@@ -441,7 +449,7 @@ class TrackingService : Service(), SensorEventListener {{
 with open(f"app/src/main/java/{PKG.replace('.', '/')}/TrackingService.kt", "w", encoding="utf-8") as f:
     f.write(service_code)
 
-# ─── 5. MainActivity.kt (UI) ───
+# ─── 5. MainActivity.kt ───
 main_activity_code = f'''package {PKG}
 
 import android.content.Context
@@ -454,10 +462,8 @@ import android.graphics.Path
 import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
-import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
-import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -472,23 +478,13 @@ import kotlin.math.hypot
 class MainActivity : ComponentActivity() {{
     private lateinit var mainView: MainView
     private var sessions = mutableListOf<JSONObject>()
-    private var isRecording = false
 
     override fun onCreate(savedInstanceState: Bundle?) {{
         super.onCreate(savedInstanceState)
-        requestPermissions()
-        loadSessions()
-        mainView = MainView(this)
-        setContentView(mainView)
+        requestPermissionsAndInit()
     }}
 
-    override fun onResume() {{
-        super.onResume()
-        loadSessions()
-        mainView.invalidate()
-    }}
-
-    private fun requestPermissions() {{
+    private fun requestPermissionsAndInit() {{
         val perms = mutableListOf<String>()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {{
             if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
@@ -496,10 +492,33 @@ class MainActivity : ComponentActivity() {{
         }}
         if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.BODY_SENSORS) != PackageManager.PERMISSION_GRANTED)
             perms.add(android.Manifest.permission.BODY_SENSORS)
-        if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.ACTIVITY_RECOGNITION) != PackageManager.PERMISSION_GRANTED)
-            perms.add(android.Manifest.permission.ACTIVITY_RECOGNITION)
         
-        if (perms.isNotEmpty()) ActivityCompat.requestPermissions(this, perms.toTypedArray(), 100)
+        if (perms.isNotEmpty()) {{
+            ActivityCompat.requestPermissions(this, perms.toTypedArray(), 100)
+        }} else {{
+            setupUI()
+        }}
+    }}
+    
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {{
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        setupUI()
+    }}
+
+    private fun setupUI() {{
+        if (!::mainView.isInitialized) {{
+            loadSessions()
+            mainView = MainView(this)
+            setContentView(mainView)
+        }}
+    }}
+
+    override fun onResume() {{
+        super.onResume()
+        if (::mainView.isInitialized) {{
+            loadSessions()
+            mainView.invalidate()
+        }}
     }}
 
     private fun loadSessions() {{
@@ -513,18 +532,21 @@ class MainActivity : ComponentActivity() {{
     }}
 
     private fun toggleTracking() {{
+        if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.BODY_SENSORS) != PackageManager.PERMISSION_GRANTED) {{
+            requestPermissionsAndInit()
+            return
+        }}
+        
         val intent = Intent(this, TrackingService::class.java)
         if (isServiceRunning()) {{
             intent.action = TrackingService.ACTION_STOP
             startService(intent)
-            isRecording = false
         }} else {{
             intent.action = TrackingService.ACTION_START
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent)
             else startService(intent)
-            isRecording = true
         }}
-        mainView.postDelayed({{ mainView.invalidate() }}, 300)
+        mainView.postDelayed({{ mainView.invalidate() }}, 400)
     }}
 
     private fun isServiceRunning(): Boolean {{
@@ -544,7 +566,7 @@ class MainActivity : ComponentActivity() {{
         private var toastTxt = ""; private var toastUntil = 0L
         private var downTime = 0L; private var downX = 0f; private var downY = 0f
         private var longFired = false
-        private val longRunnable = Runnable {{ longFired = true; toggleTracking() }}
+        private val longRunnable = Runnable {{ longFired = true; clearAll() }}
 
         fun showToast(t: String) {{
             toastTxt = t; toastUntil = System.currentTimeMillis() + 1500
@@ -606,6 +628,8 @@ class MainActivity : ComponentActivity() {{
                 val dur1 = fmtDur(s1.optInt("durationSec", 0).toLong())
                 drawTxt(c, "${{fmt.format(Date(s1.getLong("startTs")))}} · $dur1", cx, cy + r + 85f, 18f, 0xFF666666.toInt())
             }}
+            
+            if (running) postInvalidateDelayed(1000)
         }}
 
         private fun drawStats(c: Canvas) {{
@@ -667,28 +691,61 @@ class MainActivity : ComponentActivity() {{
             }}
         }}
 
-        private fun handleTap(x: Float) {{
+        private fun handleTap(x: Float, y: Float) {{
             val w = width.toFloat()
-            when {{
-                x < w * 0.30f && screen > 0 -> {{ screen--; invalidate() }}
-                x > w * 0.70f && screen < screens.size - 1 -> {{ screen++; invalidate() }}
-                screen == 0 -> toggleTracking()
-                screen == 3 -> cancelLast()
+            // Зоны навигации по краям (30% слева, 30% справа)
+            if (x < w * 0.30f) {{
+                if (screen > 0) {{ screen--; invalidate() }}
+            }} else if (x > w * 0.70f) {{
+                if (screen < screens.size - 1) {{ screen++; invalidate() }}
+            }} else {{
+                // Центральная зона (нажатие на кнопки)
+                when (screen) {{
+                    0 -> {{
+                        val cx = w / 2f
+                        val cy = height / 2f - 20f
+                        val r = w * 0.27f
+                        // Запускаем трекинг только если тапнули точно по круглой кнопке в центре
+                        if (kotlin.math.hypot(x - cx, y - cy) <= r * 1.5f) {{
+                            toggleTracking()
+                        }}
+                    }}
+                    3 -> {{
+                        // Удаление последней на странице настроек
+                        cancelLast()
+                    }}
+                }}
             }}
         }}
 
         override fun onTouchEvent(e: MotionEvent): Boolean {{
             when (e.action) {{
                 MotionEvent.ACTION_DOWN -> {{
-                    downTime = System.currentTimeMillis(); downX = e.x; downY = e.y; longFired = false
+                    downTime = System.currentTimeMillis()
+                    downX = e.x
+                    downY = e.y
+                    longFired = false
                     if (screen == 3) postDelayed(longRunnable, 800)
                 }}
                 MotionEvent.ACTION_UP -> {{
                     removeCallbacks(longRunnable)
                     val dt = System.currentTimeMillis() - downTime
-                    val dx = abs(e.x - downX); val dy = abs(e.y - downY)
-                    if (!longFired && dt < 400 && dx < 40f && dy < 40f) handleTap(e.x)
-                    else if (longFired && screen == 3) clearAll()
+                    val dx = e.x - downX
+                    val dy = e.y - downY
+                    val absDx = abs(dx)
+                    val absDy = abs(dy)
+                    
+                    if (!longFired) {{
+                        // Если это был быстрый и длинный жест по горизонтали -> обрабатываем как свайп
+                        if (dt < 500 && absDx > 70f && absDx > absDy * 1.5f) {{
+                            if (dx > 0 && screen > 0) {{ screen--; invalidate() }}
+                            else if (dx < 0 && screen < screens.size - 1) {{ screen++; invalidate() }}
+                        }} 
+                        // Если жест короткий и не сдвинулся далеко -> это тап
+                        else if (dt < 400 && absDx < 40f && absDy < 40f) {{
+                            handleTap(e.x, e.y)
+                        }}
+                    }}
                 }}
                 MotionEvent.ACTION_CANCEL -> removeCallbacks(longRunnable)
             }}
@@ -727,7 +784,4 @@ class MainActivity : ComponentActivity() {{
 with open(f"app/src/main/java/{PKG.replace('.', '/')}/MainActivity.kt", "w", encoding="utf-8") as f:
     f.write(main_activity_code)
 
-print("✅ Проект '4:30' успешно сгенерирован!")
-print("📁 Структура создана в текущей папке.")
-print("\n🚀 GitHub Actions сам соберёт APK при push.")
-print("   Установи на часы: adb install -r app/build/outputs/apk/release/app-release.apk")
+print("Готово. Запускай сборку.")
