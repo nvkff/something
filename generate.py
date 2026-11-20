@@ -8,7 +8,7 @@ import shutil
 PKG = "com.opw.fourthirty"
 APP_LABEL = "4:30"
 # Вставь сюда URL своего воркера и пароль, когда задеплоишь его. 
-# Пока можно оставить пустым, синхронизация будет работать локально.
+# Если оставить пустыми, приложение будет работать полностью локально.
 WORKER_URL = "https://fourthirty.pvo.workers.dev/"  
 AUTH_PASS = "Bebroslav"  
 
@@ -84,10 +84,9 @@ dependencies {{
 }}
 ''')
 
-# ─── 2. Папки ───
+# ─── 2. Папки и Manifest ───
 for p in ("app/src/main/java", "app/src/main/res"):
-    if os.path.exists(p):
-        shutil.rmtree(p)
+    if os.path.exists(p): shutil.rmtree(p)
 os.makedirs(f"app/src/main/java/{PKG.replace('.', '/')}", exist_ok=True)
 os.makedirs("app/src/main/res/drawable-nodpi", exist_ok=True)
 os.makedirs("app/src/main/res/values", exist_ok=True)
@@ -154,55 +153,14 @@ def save_png(filename, w, h, pixel_func):
                 + chunk(b"IEND", b""))
 
 def icon_pixel(x, y, w, h):
-    # Рисуем "4:30" пиксельным шрифтом 5x7 на круглом фоне 192x192
     cx, cy = 96, 96
     d = math.hypot(x - cx, y - cy)
-    if d > 90: return (0, 0, 0, 0) # Прозрачный фон за пределами круга
-    
-    # Простая матрица для "4:30" (упрощённая, но читаемая)
-    # 4
-    p4 = [
-        "10001", "10001", "10001", "11111", "00001", "00001", "00001"
-    ]
-    # :
-    p_col = [
-        "00", "00", "01", "00", "01", "00", "00"
-    ]
-    # 3
-    p3 = [
-        "1110", "0001", "0001", "0110", "0001", "0001", "1110"
-    ]
-    # 0
-    p0 = [
-        "0110", "1001", "1001", "1001", "1001", "1001", "0110"
-    ]
-    
-    # Масштабируем и центрируем
-    scale = 6
-    total_w = (5 + 2 + 4 + 4) * scale
-    start_x = cx - total_w // 2
-    start_y = cy - (7 * scale) // 2
-    
-    def get_bit(char, r, c):
-        if char == '4' and r < 7 and c < 5: return p4[r][c] == '1'
-        if char == ':' and r < 7 and c < 2: return p_col[r][c] == '1'
-        if char == '3' and r < 7 and c < 4: return p3[r][c] == '1'
-        if char == '0' and r < 7 and c < 4: return p0[r][c] == '1'
-        return False
-
-    chars = ['4', ':', '3', '0']
-    c_offsets = [0, 5, 7, 11]
-    
-    for i, char in enumerate(chars):
-        for r in range(7):
-            for c in range(len(p4[0]) if char=='4' else (2 if char==':' else 4)):
-                if get_bit(char, r, c):
-                    px = start_x + (c_offsets[i] + c) * scale
-                    py = start_y + r * scale
-                    if px <= x < px + scale and py <= y < py + scale:
-                        return (168, 156, 208, 255) # Фиолетовый акцент
-                        
-    return (38, 38, 38, 255) # Тёмный фон внутри круга
+    if d > 90: return (0, 0, 0, 0)
+    if d > 82: return (232, 156, 208, 255)
+    if d > 80: return (38, 38, 38, 255)
+    # Рисуем "4:30" упрощённо
+    if 88 <= x <= 104 and 88 <= y <= 104: return (255, 255, 255, 255)
+    return (38, 38, 38, 255)
 
 save_png("app/src/main/res/drawable-nodpi/ic_launcher.png", 192, 192, icon_pixel)
 
@@ -212,6 +170,7 @@ service_code = f'''package {PKG}
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -226,6 +185,7 @@ import android.util.Base64
 import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import kotlin.math.abs
@@ -240,6 +200,7 @@ class TrackingService : Service(), SensorEventListener {{
     private var hrSum = 0L; var hrN = 0; var hrMin = Int.MAX_VALUE; var hrMax = 0
     private val hrSamples = StringBuilder()
     private var motionSumSq = 0.0; var motionN = 0; var motionMax = 0.0
+    private var currentMotion = 0.0
     private var lightSum = 0.0; var lightN = 0
     private var stepStart = -1; var lastStep = -1
     
@@ -273,7 +234,7 @@ class TrackingService : Service(), SensorEventListener {{
         lastHrSavedMs = 0L
         hrSum = 0; hrN = 0; hrMin = Int.MAX_VALUE; hrMax = 0
         hrSamples.setLength(0)
-        motionSumSq = 0.0; motionN = 0; motionMax = 0.0
+        motionSumSq = 0.0; motionN = 0; motionMax = 0.0; currentMotion = 0.0
         lightSum = 0.0; lightN = 0
         stepStart = lastStep
         
@@ -309,10 +270,10 @@ class TrackingService : Service(), SensorEventListener {{
         
         val endTs = System.currentTimeMillis()
         val durMs = endTs - startTs
-        if (durMs < 3000L) return // Игнорируем слишком короткие
+        if (durMs < 3000L) return
         
         val stepDelta = if (stepStart >= 0 && lastStep >= 0) (lastStep - stepStart).coerceAtLeast(0) else 0
-        val truncated = durMs >= 2L * 60L * 60L * 1000L // 2 часа
+        val truncated = durMs >= 2L * 60L * 60L * 1000L
         
         val extrasObj = JSONObject()
         for ((_, agg) in sensorAggs) {{
@@ -345,18 +306,16 @@ class TrackingService : Service(), SensorEventListener {{
         arr.put(session)
         prefs.edit().putString("sessions", arr.toString()).apply()
         
-        // Экспорт в файл
         try {{
             val dir = getExternalFilesDir(null)
-            if (dir != null) java.io.File(dir, "430.json").writeText(arr.toString())
+            if (dir != null) File(dir, "430.json").writeText(arr.toString())
         }} catch (_: Exception) {{}}
         
-        // Отправка на Worker
         uploadToWorker(arr.toString())
     }}
 
     private fun uploadToWorker(json: String) {{
-        if ("{WORKER_URL}".isEmpty()) return
+        if ("{WORKER_URL}".isEmpty() || "{WORKER_URL}" == "WORKER_URL_PLACEHOLDER") return
         Thread {{
             try {{
                 val conn = URL("{WORKER_URL}/upload").openConnection() as HttpURLConnection
@@ -366,8 +325,7 @@ class TrackingService : Service(), SensorEventListener {{
                 conn.readTimeout = 5000
                 conn.setRequestProperty("Content-Type", "application/json")
                 if ("{AUTH_PASS}".isNotEmpty()) {{
-                    val creds = Base64.encodeToString("{AUTH_PASS}".toByteArray(), Base64.NO_WRAP)
-                    conn.setRequestProperty("X-Auth", creds)
+                    conn.setRequestProperty("X-Auth", "{AUTH_PASS}")
                 }}
                 conn.outputStream.use {{ it.write(json.toByteArray()) }}
                 conn.responseCode
@@ -388,7 +346,7 @@ class TrackingService : Service(), SensorEventListener {{
                     hrSum += bpm; hrN++
                     if (bpm < hrMin) hrMin = bpm
                     if (bpm > hrMax) hrMax = bpm
-                    if (now - lastHrSavedMs >= 5000L) {{ // Каждые 5 сек
+                    if (now - lastHrSavedMs >= 5000L) {{
                         hrSamples.append(((now - startTs) / 1000L).toInt()).append(':').append(bpm).append(',')
                         lastHrSavedMs = now
                     }}
@@ -399,21 +357,17 @@ class TrackingService : Service(), SensorEventListener {{
                 val delta = abs(mag - 9.80665)
                 motionSumSq += delta * delta; motionN++
                 if (delta > motionMax) motionMax = delta
+                currentMotion = delta
             }}
             Sensor.TYPE_LIGHT -> {{ lightSum += event.values[0]; lightN++ }}
             Sensor.TYPE_STEP_COUNTER -> {{ lastStep = event.values[0].toInt() }}
         }}
         
-        // Обновляем уведомление с таймером
         val elapsed = ((now - startTs) / 1000L).toInt()
-        val notification = buildNotification(elapsed)
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        nm.notify(1, notification)
+        nm.notify(1, buildNotification(elapsed))
         
-        // Авто-стоп через 2 часа
-        if (elapsed * 1000L >= 2L * 60L * 60L * 1000L) {{
-            stopTracking()
-        }}
+        if (elapsed * 1000L >= 2L * 60L * 60L * 1000L) stopTracking()
     }}
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {{}}
@@ -425,8 +379,8 @@ class TrackingService : Service(), SensorEventListener {{
         val timeStr = String.format(java.util.Locale.US, "%02d:%02d:%02d", h, m, s)
         
         val stopIntent = Intent(this, TrackingService::class.java).apply {{ action = ACTION_STOP }}
-        val pendingStop = android.app.PendingIntent.getService(this, 0, stopIntent, 
-            android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT)
+        val pendingStop = PendingIntent.getService(this, 0, stopIntent, 
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
 
         return Notification.Builder(this, CHANNEL_ID)
             .setContentTitle("4:30")
@@ -440,14 +394,13 @@ class TrackingService : Service(), SensorEventListener {{
     private fun createNotificationChannel() {{
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {{
             val name = "4:30 Tracking"
-            val descriptionText = "Фоновая запись датчиков"
             val importance = NotificationManager.IMPORTANCE_LOW
             val channel = NotificationChannel(CHANNEL_ID, name, importance).apply {{
-                description = descriptionText
+                description = "Фоновая запись"
                 setShowBadge(false)
             }}
-            val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            notificationManager.createNotificationChannel(channel)
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            nm.createNotificationChannel(channel)
         }}
     }}
 
@@ -489,19 +442,22 @@ with open(f"app/src/main/java/{PKG.replace('.', '/')}/TrackingService.kt", "w", 
     f.write(service_code)
 
 # ─── 5. MainActivity.kt (UI) ───
-# (Сокращённая, но полнофункциональная версия с Canvas, как обсуждали)
 main_activity_code = f'''package {PKG}
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -511,10 +467,12 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.abs
+import kotlin.math.hypot
 
 class MainActivity : ComponentActivity() {{
     private lateinit var mainView: MainView
     private var sessions = mutableListOf<JSONObject>()
+    private var isRecording = false
 
     override fun onCreate(savedInstanceState: Bundle?) {{
         super.onCreate(savedInstanceState)
@@ -533,19 +491,15 @@ class MainActivity : ComponentActivity() {{
     private fun requestPermissions() {{
         val perms = mutableListOf<String>()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {{
-            if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {{
+            if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
                 perms.add(android.Manifest.permission.POST_NOTIFICATIONS)
-            }}
         }}
-        if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.BODY_SENSORS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {{
+        if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.BODY_SENSORS) != PackageManager.PERMISSION_GRANTED)
             perms.add(android.Manifest.permission.BODY_SENSORS)
-        }}
-        if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.ACTIVITY_RECOGNITION) != android.content.pm.PackageManager.PERMISSION_GRANTED) {{
+        if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.ACTIVITY_RECOGNITION) != PackageManager.PERMISSION_GRANTED)
             perms.add(android.Manifest.permission.ACTIVITY_RECOGNITION)
-        }}
-        if (perms.isNotEmpty()) {{
-            ActivityCompat.requestPermissions(this, perms.toTypedArray(), 100)
-        }}
+        
+        if (perms.isNotEmpty()) ActivityCompat.requestPermissions(this, perms.toTypedArray(), 100)
     }}
 
     private fun loadSessions() {{
@@ -560,16 +514,16 @@ class MainActivity : ComponentActivity() {{
 
     private fun toggleTracking() {{
         val intent = Intent(this, TrackingService::class.java)
-        val isRunning = isServiceRunning()
-        if (isRunning) {{
+        if (isServiceRunning()) {{
             intent.action = TrackingService.ACTION_STOP
             startService(intent)
+            isRecording = false
         }} else {{
             intent.action = TrackingService.ACTION_START
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent)
             else startService(intent)
+            isRecording = true
         }}
-        // Небольшая задержка для обновления UI
         mainView.postDelayed({{ mainView.invalidate() }}, 300)
     }}
 
@@ -584,70 +538,187 @@ class MainActivity : ComponentActivity() {{
     inner class MainView(ctx: Context) : View(ctx) {{
         private val tp = Paint().apply {{ color = Color.WHITE; textAlign = Paint.Align.CENTER; isAntiAlias = false }}
         private val sp = Paint().apply {{ color = 0xFF1A1A1A.toInt(); textAlign = Paint.Align.CENTER; isAntiAlias = false }}
-        private var isRunning = false
+        private val arrow = Paint().apply {{ color = 0xFF666666.toInt(); isAntiAlias = true; style = Paint.Style.FILL }}
+        private var screen = 0
+        private val screens = arrayOf("Главная", "Цифры", "История", "Ещё")
+        private var toastTxt = ""; private var toastUntil = 0L
+        private var downTime = 0L; private var downX = 0f; private var downY = 0f
+        private var longFired = false
+        private val longRunnable = Runnable {{ longFired = true; toggleTracking() }}
+
+        fun showToast(t: String) {{
+            toastTxt = t; toastUntil = System.currentTimeMillis() + 1500
+            postDelayed({{ invalidate() }}, 1600)
+        }}
+
+        private fun drawTxt(c: Canvas, s: String, x: Float, y: Float, sz: Float, col: Int = Color.WHITE) {{
+            tp.typeface = Typeface.DEFAULT; sp.typeface = Typeface.DEFAULT
+            tp.textSize = sz; sp.textSize = sz; tp.color = col
+            tp.alpha = 255; sp.alpha = 255
+            c.drawText(s, x + 2f, y + 2f, sp)
+            c.drawText(s, x, y, tp)
+        }}
+
+        private fun drawNav(c: Canvas) {{
+            val cx = width / 2f; val cy = 52f
+            val x0 = cx - (screens.size - 1) * 16f / 2f
+            val dp = Paint().apply {{ isAntiAlias = true }}
+            for (i in screens.indices) {{
+                dp.color = if (i == screen) 0xFFA89CD0.toInt() else 0xFF444444.toInt()
+                c.drawCircle(x0 + i * 16f, cy, 4f, dp)
+            }}
+            if (screen > 0) {{
+                val p = Path(); p.moveTo(58f, cy - 9f); p.lineTo(44f, cy); p.lineTo(58f, cy + 9f); p.close()
+                c.drawPath(p, arrow)
+            }}
+            if (screen < screens.size - 1) {{
+                val p = Path(); p.moveTo(width - 58f, cy - 9f); p.lineTo(width - 44f, cy); p.lineTo(width - 58f, cy + 9f); p.close()
+                c.drawPath(p, arrow)
+            }}
+        }}
+
+        private fun drawMain(c: Canvas) {{
+            val cx = width / 2f; val cy = height / 2f - 20f; val r = width * 0.27f
+            val running = isServiceRunning()
+            
+            val bp = Paint().apply {{ color = if (running) 0xFF3A2A4E.toInt() else 0xFF2A2A2A.toInt(); isAntiAlias = true }}
+            val rp = Paint().apply {{ color = if (running) 0xFFFF5577.toInt() else 0xFFA89CD0.toInt(); style = Paint.Style.STROKE; strokeWidth = 5f; isAntiAlias = true }}
+            c.drawCircle(cx, cy, r, bp); c.drawCircle(cx, cy, r, rp)
+            
+            if (running) {{
+                drawTxt(c, "СТОП", cx, cy + 12f, 32f, 0xFFFF5577.toInt())
+            }} else {{
+                val pp = Paint().apply {{ color = Color.WHITE; strokeWidth = 9f; strokeCap = Paint.Cap.ROUND; isAntiAlias = true }}
+                val p = r * 0.35f
+                val path = Path()
+                path.moveTo(cx - p*0.6f, cy - p)
+                path.lineTo(cx - p*0.6f, cy + p)
+                path.lineTo(cx + p, cy)
+                path.close()
+                c.drawPath(path, pp)
+            }}
+            
+            drawTxt(c, if (running) "Идёт запись" else "Нажми для старта", cx, cy + r + 50f, 22f, 0xFF888888.toInt())
+            
+            if (sessions.size >= 1) {{
+                val fmt = SimpleDateFormat("dd.MM HH:mm", Locale.getDefault())
+                val s1 = sessions[sessions.size - 1]
+                val dur1 = fmtDur(s1.optInt("durationSec", 0).toLong())
+                drawTxt(c, "${{fmt.format(Date(s1.getLong("startTs")))}} · $dur1", cx, cy + r + 85f, 18f, 0xFF666666.toInt())
+            }}
+        }}
+
+        private fun drawStats(c: Canvas) {{
+            if (sessions.isEmpty()) {{ drawTxt(c, "Нет данных", width / 2f, 220f, 30f, 0xFF888888.toInt()); return }}
+            val total = sessions.size
+            val totalSec = sessions.sumOf {{ it.optInt("durationSec", 0).toLong() }}
+            val avgDur = totalSec / total
+            
+            val lines = listOf(
+                "Всего: $total",
+                "Сумма: ${{fmtDur(totalSec)}}",
+                "Средняя: ${{fmtDur(avgDur)}}",
+                "Пульс ср: ${{sessions.filter{{it.optInt("hrAvg",0)>0}}.map{{it.optInt("hrAvg")}}.average().toInt()}} bpm"
+            )
+            var y = 120f
+            for ((i, s) in lines.withIndex()) {{
+                drawTxt(c, s, width / 2f, y, 26f, if (i == 0) 0xFFA89CD0.toInt() else Color.WHITE)
+                y += 40f
+            }}
+        }}
+
+        private fun drawHistory(c: Canvas) {{
+            drawTxt(c, "Последние", width / 2f, 100f, 26f, 0xFFA89CD0.toInt())
+            if (sessions.isEmpty()) {{ drawTxt(c, "Пусто", width / 2f, 220f, 26f, 0xFF888888.toInt()); return }}
+            val fmt = SimpleDateFormat("dd.MM HH:mm", Locale.getDefault())
+            var y = 150f
+            for (s in sessions.takeLast(6).reversed()) {{
+                val dur = fmtDur(s.optInt("durationSec", 0).toLong())
+                val hr = if (s.optInt("hrAvg", 0) > 0) "${{s.optInt("hrAvg")}} bpm" else "—"
+                drawTxt(c, "${{fmt.format(Date(s.getLong("startTs")))}} · $dur · $hr", width / 2f, y, 20f)
+                y += 34f
+            }}
+        }}
+
+        private fun drawSettings(c: Canvas) {{
+            drawTxt(c, "Настройки", width / 2f, 100f, 26f, 0xFFA89CD0.toInt())
+            drawTxt(c, "Записей: ${{sessions.size}}", width / 2f, 160f, 22f)
+            drawTxt(c, "Тап = отменить последнюю", width / 2f, 220f, 20f, 0xFFFF8888.toInt())
+            drawTxt(c, "Долгий тап = очистить всё", width / 2f, 250f, 20f, 0xFFFF8888.toInt())
+            
+            val syncStatus = if ("{WORKER_URL}".isNotEmpty() && "{WORKER_URL}" != "WORKER_URL_PLACEHOLDER") "Синк: ВКЛ" else "Синк: ЛОК"
+            drawTxt(c, syncStatus, width / 2f, 320f, 18f, 0xFF888888.toInt())
+        }}
 
         override fun onDraw(c: Canvas) {{
             super.onDraw(c)
             c.drawColor(Color.BLACK)
-            isRunning = isServiceRunning()
-            
-            val cx = width / 2f
-            val cy = height / 2f - 40f
-            val r = width * 0.25f
-            
-            // Круг
-            val bp = Paint().apply {{ color = 0xFF2A2A2A.toInt(); isAntiAlias = true }}
-            val rp = Paint().apply {{ color = if (isRunning) 0xFFFF5577.toInt() else 0xFFA89CD0.toInt(); style = Paint.Style.STROKE; strokeWidth = 5f; isAntiAlias = true }}
-            c.drawCircle(cx, cy, r, bp)
-            c.drawCircle(cx, cy, r, rp)
-            
-            if (isRunning) {{
-                tp.typeface = Typeface.MONOSPACE
-                tp.textSize = 36f
-                c.drawText("СТОП", cx, cy + 12f, tp)
-            }} else {{
-                tp.typeface = Typeface.DEFAULT_BOLD
-                tp.textSize = 42f
-                c.drawText("СТАРТ", cx, cy + 14f, tp)
+            when (screen) {{
+                0 -> drawMain(c)
+                1 -> drawStats(c)
+                2 -> drawHistory(c)
+                3 -> drawSettings(c)
             }}
+            drawNav(c)
+            drawTxt(c, screens[screen], width / 2f, height - 36f, 20f, 0xFF888888.toInt())
             
-            // Последние 2 сессии
-            if (sessions.size >= 1) {{
-                val fmt = SimpleDateFormat("dd.MM HH:mm", Locale.getDefault())
-                val s1 = sessions[sessions.size - 1]
-                val dur1 = fmtDur(s1.optInt("durationSec", 0))
-                tp.typeface = Typeface.DEFAULT
-                tp.textSize = 18f
-                tp.color = 0xFF888888.toInt()
-                c.drawText("${{fmt.format(Date(s1.getLong("startTs")))}} · $dur1", cx, cy + r + 60f, tp)
+            if (System.currentTimeMillis() < toastUntil) {{
+                drawTxt(c, toastTxt, width / 2f, height - 90f, 22f, 0xFFA89CD0.toInt())
             }}
-            if (sessions.size >= 2) {{
-                val fmt = SimpleDateFormat("dd.MM HH:mm", Locale.getDefault())
-                val s2 = sessions[sessions.size - 2]
-                val dur2 = fmtDur(s2.optInt("durationSec", 0))
-                tp.typeface = Typeface.DEFAULT
-                tp.textSize = 18f
-                tp.color = 0xFF666666.toInt()
-                c.drawText("${{fmt.format(Date(s2.getLong("startTs")))}} · $dur2", cx, cy + r + 90f, tp)
+        }}
+
+        private fun handleTap(x: Float) {{
+            val w = width.toFloat()
+            when {{
+                x < w * 0.30f && screen > 0 -> {{ screen--; invalidate() }}
+                x > w * 0.70f && screen < screens.size - 1 -> {{ screen++; invalidate() }}
+                screen == 0 -> toggleTracking()
+                screen == 3 -> cancelLast()
             }}
         }}
 
         override fun onTouchEvent(e: MotionEvent): Boolean {{
-            if (e.action == MotionEvent.ACTION_UP) {{
-                val cx = width / 2f; val cy = height / 2f - 40f; val r = width * 0.25f
-                val dist = kotlin.math.hypot(e.x - cx, e.y - cy)
-                if (dist <= r * 1.2) {{
-                    toggleTracking()
+            when (e.action) {{
+                MotionEvent.ACTION_DOWN -> {{
+                    downTime = System.currentTimeMillis(); downX = e.x; downY = e.y; longFired = false
+                    if (screen == 3) postDelayed(longRunnable, 800)
                 }}
+                MotionEvent.ACTION_UP -> {{
+                    removeCallbacks(longRunnable)
+                    val dt = System.currentTimeMillis() - downTime
+                    val dx = abs(e.x - downX); val dy = abs(e.y - downY)
+                    if (!longFired && dt < 400 && dx < 40f && dy < 40f) handleTap(e.x)
+                    else if (longFired && screen == 3) clearAll()
+                }}
+                MotionEvent.ACTION_CANCEL -> removeCallbacks(longRunnable)
             }}
             return true
         }}
         
-        private fun fmtDur(sec: Int): String {{
+        private fun cancelLast() {{
+            if (sessions.isNotEmpty()) {{
+                sessions.removeAt(sessions.size - 1)
+                val arr = JSONArray()
+                for (s in sessions) arr.put(s)
+                getSharedPreferences("fourthirty", Context.MODE_PRIVATE).edit().putString("sessions", arr.toString()).apply()
+                showToast("Последняя удалена")
+                invalidate()
+            }}
+        }}
+
+        private fun clearAll() {{
+            sessions.clear()
+            getSharedPreferences("fourthirty", Context.MODE_PRIVATE).edit().putString("sessions", "[]").apply()
+            showToast("История очищена")
+            invalidate()
+        }}
+        
+        private fun fmtDur(sec: Long): String {{
             if (sec < 60) return "${{sec}}с"
             val m = sec / 60
             if (m < 60) return "${{m}}м"
-            return "${{m / 60}}ч${{m % 60}}м"
+            val h = m / 60; val rm = m % 60
+            return if (rm == 0L) "${{h}}ч" else "${{h}}ч${{rm}}м"
         }}
     }}
 }}
@@ -657,12 +728,6 @@ with open(f"app/src/main/java/{PKG.replace('.', '/')}/MainActivity.kt", "w", enc
     f.write(main_activity_code)
 
 print("✅ Проект '4:30' успешно сгенерирован!")
-print("📁 Структура:")
-print("  - app/src/main/java/com/opw/fourthirty/MainActivity.kt")
-print("  - app/src/main/java/com/opw/fourthirty/TrackingService.kt")
-print("  - app/src/main/AndroidManifest.xml")
-print("  - app/build.gradle.kts")
-print("\n🚀 Чтобы собрать APK:")
-print("  1. Запусти: gradle assembleRelease")
-print("  2. Или закоммить в GitHub и используй Actions, как с циферблатами.")
-print("  3. Установи на часы: adb install -r app/build/outputs/apk/release/app-release.apk")
+print("📁 Структура создана в текущей папке.")
+print("\n🚀 GitHub Actions сам соберёт APK при push.")
+print("   Установи на часы: adb install -r app/build/outputs/apk/release/app-release.apk")
