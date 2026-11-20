@@ -111,7 +111,7 @@ with open("app/src/main/AndroidManifest.xml", "w", encoding="utf-8") as f:
     
     <application
         android:allowBackup="false"
-        android:icon="@drawable-nodpi/ic_launcher"
+        android:icon="@drawable/ic_launcher"
         android:label="@string/app_name">
         <uses-library android:name="com.google.android.wearable" android:required="false" />
         <meta-data android:name="com.google.android.wearable.standalone" android:value="true" />
