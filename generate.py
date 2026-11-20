@@ -96,6 +96,7 @@ with open("app/src/main/res/values/strings.xml", "w", encoding="utf-8") as f:
 </resources>
 ''')
 
+# Оригинальный манифест (из версии DeepSeek)
 with open("app/src/main/AndroidManifest.xml", "w", encoding="utf-8") as f:
     f.write(f'''<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -104,8 +105,7 @@ with open("app/src/main/AndroidManifest.xml", "w", encoding="utf-8") as f:
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_HEALTH" />
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.INTERNET" />
     
     <application
@@ -130,7 +130,7 @@ with open("app/src/main/AndroidManifest.xml", "w", encoding="utf-8") as f:
         <service
             android:name=".TrackingService"
             android:exported="false"
-            android:foregroundServiceType="health" />
+            android:foregroundServiceType="dataSync" />
     </application>
 </manifest>
 ''')
@@ -162,7 +162,7 @@ def icon_pixel(x, y, w, h):
 
 save_png("app/src/main/res/drawable/ic_launcher.png", 192, 192, icon_pixel)
 
-# ─── 4. TrackingService.kt ───
+# ─── 4. TrackingService.kt (Архитектура DeepSeek + 1sec троттлинг) ───
 service_code = f'''package {PKG}
 
 import android.app.Notification
@@ -178,7 +178,6 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.Build
 import android.os.IBinder
-import android.os.PowerManager
 import android.util.Base64
 import org.json.JSONArray
 import org.json.JSONObject
@@ -191,7 +190,6 @@ import kotlin.math.sqrt
 
 class TrackingService : Service(), SensorEventListener {{
     private lateinit var sm: SensorManager
-    private var wakeLock: PowerManager.WakeLock? = null
     
     private var isRecording = false
     private var startTs = 0L
@@ -210,7 +208,7 @@ class TrackingService : Service(), SensorEventListener {{
         const val CHANNEL_ID = "430_tracking_channel"
         const val ACTION_START = "ACTION_START"
         const val ACTION_STOP = "ACTION_STOP"
-        var currentStartTs = 0L // Чтобы интерфейс брал время напрямую отсюда
+        var currentStartTs = 0L
     }}
 
     override fun onCreate() {{
@@ -230,15 +228,10 @@ class TrackingService : Service(), SensorEventListener {{
     private fun startTracking() {{
         if (isRecording) return
         
-        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "FourThirty::BackgroundTracking")
-        wakeLock?.acquire(2L * 60L * 60L * 1000L) 
-        
         isRecording = true
         startTs = System.currentTimeMillis()
         currentStartTs = startTs
         lastNotificationMs = startTs
-        
         lastHrSavedMs = 0L
         hrSum = 0; hrN = 0; hrMin = Int.MAX_VALUE; hrMax = 0
         hrSamples.setLength(0)
@@ -273,9 +266,6 @@ class TrackingService : Service(), SensorEventListener {{
         isRecording = false
         currentStartTs = 0L
         sm.unregisterListener(this)
-        
-        try {{ wakeLock?.takeIf {{ it.isHeld }}?.release() }} catch (_: Exception) {{}}
-        wakeLock = null
         
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -379,7 +369,7 @@ class TrackingService : Service(), SensorEventListener {{
             Sensor.TYPE_STEP_COUNTER -> {{ lastStep = event.values[0].toInt() }}
         }}
         
-        // Лимитируем обновление уведомления до 1 раза в секунду, чтобы не повесить часы!
+        // Лимитируем обновление уведомления до 1 раза в секунду
         if (now - lastNotificationMs >= 1000L) {{
             lastNotificationMs = now
             val elapsed = ((now - startTs) / 1000L).toInt()
@@ -458,7 +448,7 @@ class TrackingService : Service(), SensorEventListener {{
 with open(f"app/src/main/java/{PKG.replace('.', '/')}/TrackingService.kt", "w", encoding="utf-8") as f:
     f.write(service_code)
 
-# ─── 5. MainActivity.kt ───
+# ─── 5. MainActivity.kt (GestureDetector + AmbientLifecycleObserver) ───
 main_activity_code = f'''package {PKG}
 
 import android.content.Context
@@ -471,24 +461,50 @@ import android.graphics.Path
 import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
+import android.view.GestureDetector
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.wear.ambient.AmbientLifecycleObserver
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import kotlin.math.abs
+import kotlin.math.hypot
 
 class MainActivity : ComponentActivity() {{
     private lateinit var mainView: MainView
     private var sessions = mutableListOf<JSONObject>()
+    
+    private lateinit var ambientObserver: AmbientLifecycleObserver
+    private var isAmbient = false
+
+    private val ambientCallback = object : AmbientLifecycleObserver.AmbientLifecycleCallback {{
+        override fun onEnterAmbient(ambientDetails: AmbientLifecycleObserver.AmbientDetails) {{
+            isAmbient = true
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            if (::mainView.isInitialized) mainView.invalidate()
+        }}
+        override fun onUpdateAmbient() {{
+            if (::mainView.isInitialized) mainView.invalidate()
+        }}
+        override fun onExitAmbient() {{
+            isAmbient = false
+            if (::mainView.isInitialized) mainView.invalidate()
+        }}
+    }}
 
     override fun onCreate(savedInstanceState: Bundle?) {{
         super.onCreate(savedInstanceState)
+        
+        ambientObserver = AmbientLifecycleObserver(this, ContextCompat.getMainExecutor(this), ambientCallback)
+        lifecycle.addObserver(ambientObserver)
+        
         requestPermissionsAndInit()
     }}
 
@@ -572,20 +588,62 @@ class MainActivity : ComponentActivity() {{
         private var screen = 0
         private val screens = arrayOf("Главная", "Цифры", "История", "Ещё")
         private var toastTxt = ""; private var toastUntil = 0L
-        private var downTime = 0L; private var downX = 0f; private var downY = 0f
-        private var longFired = false
-        private val longRunnable = Runnable {{ longFired = true; clearAll() }}
+
+        // Используем встроенный GestureDetector как в for-smart-watch.md!
+        private val gestureDetector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {{
+            override fun onDown(e: MotionEvent): Boolean = true
+
+            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {{
+                handleTap(e.x, e.y)
+                return true
+            }}
+
+            override fun onLongPress(e: MotionEvent) {{
+                performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                if (screen == 3) clearAll()
+            }}
+        }})
+
+        override fun onTouchEvent(event: MotionEvent): Boolean {{
+            gestureDetector.onTouchEvent(event)
+            return true
+        }}
 
         fun showToast(t: String) {{
             toastTxt = t; toastUntil = System.currentTimeMillis() + 1500
             postDelayed({{ invalidate() }}, 1600)
         }}
 
+        private fun handleTap(x: Float, y: Float) {{
+            val w = width.toFloat()
+            // Зоны по 30% слева и справа строго для навигации
+            if (x < w * 0.30f) {{
+                if (screen > 0) {{ screen--; invalidate(); performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) }}
+            }} else if (x > w * 0.70f) {{
+                if (screen < screens.size - 1) {{ screen++; invalidate(); performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) }}
+            }} else {{
+                // Центральная зона (40%)
+                if (screen == 0) {{
+                    val cx = w / 2f
+                    val cy = height / 2f - 20f
+                    val r = w * 0.27f
+                    // Действие ТОЛЬКО если тапнули внутрь круга, а не просто где-то по центру экрана
+                    if (hypot(x - cx, y - cy) <= r * 1.3f) {{
+                        performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                        toggleTracking()
+                    }}
+                }} else if (screen == 3) {{
+                    cancelLast()
+                }}
+            }}
+        }}
+
         private fun drawTxt(c: Canvas, s: String, x: Float, y: Float, sz: Float, col: Int = Color.WHITE) {{
             tp.typeface = Typeface.DEFAULT; sp.typeface = Typeface.DEFAULT
             tp.textSize = sz; sp.textSize = sz; tp.color = col
-            tp.alpha = 255; sp.alpha = 255
-            c.drawText(s, x + 2f, y + 2f, sp)
+            val alphaVal = if (isAmbient) 130 else 255
+            tp.alpha = alphaVal; sp.alpha = alphaVal
+            if (!isAmbient) c.drawText(s, x + 2f, y + 2f, sp)
             c.drawText(s, x, y, tp)
         }}
 
@@ -613,6 +671,12 @@ class MainActivity : ComponentActivity() {{
             
             val bp = Paint().apply {{ color = if (running) 0xFF3A2A4E.toInt() else 0xFF2A2A2A.toInt(); isAntiAlias = true }}
             val rp = Paint().apply {{ color = if (running) 0xFFFF5577.toInt() else 0xFFA89CD0.toInt(); style = Paint.Style.STROKE; strokeWidth = 5f; isAntiAlias = true }}
+            
+            if (isAmbient) {{
+                bp.color = Color.BLACK
+                rp.color = 0xFF666666.toInt()
+            }}
+            
             c.drawCircle(cx, cy, r, bp); c.drawCircle(cx, cy, r, rp)
             
             if (running) {{
@@ -622,13 +686,14 @@ class MainActivity : ComponentActivity() {{
                     val m = elapsed / 60
                     val s = elapsed % 60
                     val timeStr = String.format(Locale.US, "%02d:%02d", m, s)
-                    drawTxt(c, timeStr, cx, cy + 5f, 36f, Color.WHITE)
-                    drawTxt(c, "СТОП", cx, cy + r + 40f, 20f, 0xFFFF5577.toInt())
+                    drawTxt(c, timeStr, cx, cy + 8f, 38f, Color.WHITE)
+                    drawTxt(c, "СТОП", cx, cy + r + 45f, 20f, 0xFFFF5577.toInt())
                 }} else {{
                     drawTxt(c, "СТОП", cx, cy + 12f, 32f, 0xFFFF5577.toInt())
                 }}
             }} else {{
                 val pp = Paint().apply {{ color = Color.WHITE; strokeWidth = 9f; strokeCap = Paint.Cap.ROUND; isAntiAlias = true }}
+                if (isAmbient) pp.color = 0xFF888888.toInt()
                 val p = r * 0.35f
                 val path = Path()
                 path.moveTo(cx - p*0.6f, cy - p)
@@ -639,14 +704,14 @@ class MainActivity : ComponentActivity() {{
                 drawTxt(c, "Нажми для старта", cx, cy + r + 50f, 20f, 0xFF888888.toInt())
             }}
             
-            if (sessions.size >= 1) {{
+            if (sessions.size >= 1 && !isAmbient) {{
                 val fmt = SimpleDateFormat("dd.MM HH:mm", Locale.getDefault())
                 val s1 = sessions[sessions.size - 1]
                 val dur1 = fmtDur(s1.optInt("durationSec", 0).toLong())
-                drawTxt(c, "${{fmt.format(Date(s1.getLong("startTs")))}} · $dur1", cx, cy + r + 85f, 18f, 0xFF666666.toInt())
+                drawTxt(c, "${{fmt.format(Date(s1.getLong("startTs")))}} · $dur1", cx, cy + r + 90f, 18f, 0xFF666666.toInt())
             }}
             
-            if (running) postInvalidateDelayed(1000)
+            if (running && !isAmbient) postInvalidateDelayed(1000)
         }}
 
         private fun drawStats(c: Canvas) {{
@@ -684,8 +749,8 @@ class MainActivity : ComponentActivity() {{
         private fun drawSettings(c: Canvas) {{
             drawTxt(c, "Настройки", width / 2f, 100f, 26f, 0xFFA89CD0.toInt())
             drawTxt(c, "Записей: ${{sessions.size}}", width / 2f, 160f, 22f)
-            drawTxt(c, "Тап = отменить последнюю", width / 2f, 220f, 20f, 0xFFFF8888.toInt())
-            drawTxt(c, "Долгий тап = очистить всё", width / 2f, 250f, 20f, 0xFFFF8888.toInt())
+            drawTxt(c, "Тап по центру = отменить", width / 2f, 220f, 20f, 0xFFFF8888.toInt())
+            drawTxt(c, "Долгий тап = очистить", width / 2f, 250f, 20f, 0xFFFF8888.toInt())
             
             val syncStatus = if ("{WORKER_URL}".isNotEmpty() && "{WORKER_URL}" != "WORKER_URL_PLACEHOLDER") "Синк: ВКЛ" else "Синк: ЛОК"
             drawTxt(c, syncStatus, width / 2f, 320f, 18f, 0xFF888888.toInt())
@@ -700,76 +765,19 @@ class MainActivity : ComponentActivity() {{
                 2 -> drawHistory(c)
                 3 -> drawSettings(c)
             }}
-            drawNav(c)
-            drawTxt(c, screens[screen], width / 2f, height - 36f, 20f, 0xFF888888.toInt())
+            if (!isAmbient) {{
+                drawNav(c)
+                drawTxt(c, screens[screen], width / 2f, height - 36f, 20f, 0xFF888888.toInt())
+            }}
             
             if (System.currentTimeMillis() < toastUntil) {{
                 drawTxt(c, toastTxt, width / 2f, height - 90f, 22f, 0xFFA89CD0.toInt())
             }}
         }}
-
-        private fun handleTap(x: Float, y: Float) {{
-            val w = width.toFloat()
-            // Жесткое разделение зон: 30% слева, 30% справа
-            if (x < w * 0.30f) {{
-                if (screen > 0) {{ screen--; invalidate() }}
-            }} else if (x > w * 0.70f) {{
-                if (screen < screens.size - 1) {{ screen++; invalidate() }}
-            }} else {{
-                // Центральная зона (только для кнопок)
-                when (screen) {{
-                    0 -> {{
-                        val cx = w / 2f
-                        val cy = height / 2f - 20f
-                        val r = w * 0.27f
-                        // Реагируем ТОЛЬКО если тапнули по центральному кругу (с запасом 1.5)
-                        if (kotlin.math.hypot(x - cx, y - cy) <= r * 1.5f) {{
-                            toggleTracking()
-                        }}
-                    }}
-                    3 -> {{
-                        cancelLast()
-                    }}
-                }}
-            }}
-        }}
-
-        override fun onTouchEvent(e: MotionEvent): Boolean {{
-            when (e.action) {{
-                MotionEvent.ACTION_DOWN -> {{
-                    downTime = System.currentTimeMillis()
-                    downX = e.x
-                    downY = e.y
-                    longFired = false
-                    if (screen == 3) postDelayed(longRunnable, 800)
-                }}
-                MotionEvent.ACTION_UP -> {{
-                    removeCallbacks(longRunnable)
-                    val dt = System.currentTimeMillis() - downTime
-                    val dx = e.x - downX
-                    val dy = e.y - downY
-                    val absDx = abs(dx)
-                    val absDy = abs(dy)
-                    
-                    if (!longFired) {{
-                        // Обработка настоящего свайпа (быстрое и длинное движение вбок)
-                        if (dt < 500 && absDx > 70f && absDx > absDy * 1.5f) {{
-                            if (dx > 0 && screen > 0) {{ screen--; invalidate() }}
-                            else if (dx < 0 && screen < screens.size - 1) {{ screen++; invalidate() }}
-                        }} 
-                        // Если жест короткий и палец почти не сдвинулся -> это тап
-                        else if (dt < 400 && absDx < 40f && absDy < 40f) {{
-                            handleTap(e.x, e.y)
-                        }}
-                    }}
-                }}
-                MotionEvent.ACTION_CANCEL -> removeCallbacks(longRunnable)
-            }}
-            return true
-        }}
         
         private fun cancelLast() {{
             if (sessions.isNotEmpty()) {{
+                performHapticFeedback(HapticFeedbackConstants.REJECT)
                 sessions.removeAt(sessions.size - 1)
                 val arr = JSONArray()
                 for (s in sessions) arr.put(s)
