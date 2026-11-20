@@ -7,8 +7,8 @@ import shutil
 # ─── НАСТРОЙКИ ───
 PKG = "com.opw.fourthirty"
 APP_LABEL = "4:30"
-WORKER_URL = ""  
-AUTH_PASS = ""  
+WORKER_URL = "https://fourthirty.pvo.workers.dev/"  
+AUTH_PASS = "Bebroslav"  
 
 # ─── 1. Gradle-обвязка ───
 with open("build.gradle.kts", "w", encoding="utf-8") as f:
@@ -257,7 +257,6 @@ class TrackingService : Service(), SensorEventListener {{
         val seen = mutableSetOf<Int>()
         for (s in sm.getSensorList(Sensor.TYPE_ALL)) {{
             if (s.type in seen) continue
-            // Исключаем триггерные датчики, они ломают непрерывную регистрацию
             if (s.type == Sensor.TYPE_SIGNIFICANT_MOTION || s.type == Sensor.TYPE_STEP_DETECTOR) continue
             
             val delay = if (s.type == Sensor.TYPE_ACCELEROMETER || s.type == Sensor.TYPE_GYROSCOPE) 
@@ -410,7 +409,6 @@ class TrackingService : Service(), SensorEventListener {{
             Sensor.TYPE_STEP_COUNTER -> {{ lastStep = event.values[0].toInt() }}
         }}
         
-        // Лимитируем обновление уведомления до 1 раза в секунду
         if (now - lastNotificationMs >= 1000L) {{
             lastNotificationMs = now
             val elapsed = ((now - startTs) / 1000L).toInt()
@@ -504,6 +502,7 @@ import android.os.Build
 import android.os.Bundle
 import android.view.GestureDetector
 import android.view.HapticFeedbackConstants
+import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
@@ -516,7 +515,6 @@ import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import kotlin.math.abs
 import kotlin.math.hypot
 
 class MainActivity : ComponentActivity() {{
@@ -629,6 +627,7 @@ class MainActivity : ComponentActivity() {{
         private val screens = arrayOf("Главная", "Цифры", "История", "Ещё")
         private var toastTxt = ""; private var toastUntil = 0L
 
+        // Обработка простого тапа
         private val gestureDetector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {{
             override fun onDown(e: MotionEvent): Boolean = true
 
@@ -641,27 +640,37 @@ class MainActivity : ComponentActivity() {{
                 performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                 if (screen == 3) clearAll()
             }}
+        }})
 
-            // Настоящие свайпы: экраны листаются плавным смахиванием!
-            override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {{
-                if (e1 == null) return false
-                val dx = e2.x - e1.x
-                val dy = e2.y - e1.y
-                if (abs(dx) > 60f && abs(dx) > abs(dy) * 1.5f && abs(velocityX) > 150f) {{
-                    if (dx > 0 && screen > 0) {{ 
-                        screen--
-                        invalidate()
-                        performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) 
-                    }} else if (dx < 0 && screen < screens.size - 1) {{ 
+        init {{
+            // Подключаем управление КОЛЁСИКОМ (Rotary Crown)
+            isFocusable = true
+            isFocusableInTouchMode = true
+            requestFocus()
+            
+            setOnGenericMotionListener {{ _, event ->
+                if (event.action == MotionEvent.ACTION_SCROLL && 
+                    event.isFromSource(InputDevice.SOURCE_ROTARY_ENCODER)) {{
+                    val delta = event.getAxisValue(MotionEvent.AXIS_SCROLL)
+                    if (delta > 0 && screen < screens.size - 1) {{
                         screen++
                         invalidate()
-                        performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) 
-                    }}
-                    return true
-                }}
-                return false
+                        performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                        true
+                    }} else if (delta < 0 && screen > 0) {{
+                        screen--
+                        invalidate()
+                        performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                        true
+                    }} else false
+                }} else false
             }}
-        }})
+        }}
+
+        override fun onAttachedToWindow() {{
+            super.onAttachedToWindow()
+            requestFocus()
+        }}
 
         override fun onTouchEvent(event: MotionEvent): Boolean {{
             gestureDetector.onTouchEvent(event)
@@ -677,32 +686,44 @@ class MainActivity : ComponentActivity() {{
             val w = width.toFloat()
             val h = height.toFloat()
             
-            if (x < w * 0.30f) {{
-                if (screen > 0) {{ screen--; invalidate(); performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) }}
-            }} else if (x > w * 0.70f) {{
-                if (screen < screens.size - 1) {{ screen++; invalidate(); performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) }}
-            }} else {{
-                if (screen == 0) {{
-                    val cx = w / 2f
-                    val cy = h / 2f - 20f
-                    val r = w * 0.27f
-                    if (hypot(x - cx, y - cy) <= r * 1.3f) {{
-                        performHapticFeedback(HapticFeedbackConstants.CONFIRM)
-                        toggleTracking()
-                    }}
-                }} else if (screen == 3) {{
-                    val cy = h / 2f
-                    // Чёткие зоны для двух кнопок в настройках
-                    if (y > cy + 20f && y < cy + 90f) {{
-                        try {{
-                            val intent = Intent("androidx.health.ACTION_REQUEST_PERMISSIONS")
-                            intent.putExtra("androidx.health.health_permissions", arrayOf("android.permission.health.READ_SLEEP"))
-                            context.startActivity(intent)
-                        }} catch (e: Exception) {{ showToast("Health Connect недоступен") }}
-                    }} else if (y > cy - 50f && y < cy + 10f) {{
-                        cancelLast()
-                    }}
+            // ПРИОРИТЕТ 1: Проверяем нажатия на ВАЖНЫЕ КНОПКИ
+            if (screen == 0) {{
+                val cx = w / 2f
+                val cy = h / 2f - 20f
+                val r = w * 0.27f
+                // Если тапнули СТРОГО в пределы центрального круга
+                if (hypot(x - cx, y - cy) <= r * 1.3f) {{
+                    performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                    toggleTracking()
+                    return // Действие выполнено, выходим
                 }}
+            }} else if (screen == 3) {{
+                val cy = h / 2f
+                // Кнопка доступа ко сну
+                if (y > cy + 20f && y < cy + 90f) {{
+                    try {{
+                        val intent = Intent("androidx.health.ACTION_REQUEST_PERMISSIONS")
+                        intent.putExtra("androidx.health.health_permissions", arrayOf("android.permission.health.READ_SLEEP"))
+                        context.startActivity(intent)
+                    }} catch (e: Exception) {{ showToast("Health Connect недоступен") }}
+                    return
+                }} 
+                // Кнопка удаления последней записи
+                else if (y > cy - 50f && y < cy + 10f) {{
+                    cancelLast()
+                    return
+                }}
+            }}
+            
+            // ПРИОРИТЕТ 2: Если мы не попали ни в одну кнопку, значит это была навигация по краям
+            if (x < w * 0.35f && screen > 0) {{
+                screen--
+                invalidate()
+                performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+            }} else if (x > w * 0.65f && screen < screens.size - 1) {{
+                screen++
+                invalidate()
+                performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
             }}
         }}
 
