@@ -254,11 +254,10 @@ class TrackingService : Service(), SensorEventListener {{
         sensorAggs.clear()
         registeredSensors.clear()
         
-        // Подключаем вообще все доступные датчики (Skin Temp, SpO2, и т.д.)
         val seen = mutableSetOf<Int>()
         for (s in sm.getSensorList(Sensor.TYPE_ALL)) {{
             if (s.type in seen) continue
-            // Фильтруем только датчики-триггеры, которые не пишут непрерывно
+            // Исключаем триггерные датчики, они ломают непрерывную регистрацию
             if (s.type == Sensor.TYPE_SIGNIFICANT_MOTION || s.type == Sensor.TYPE_STEP_DETECTOR) continue
             
             val delay = if (s.type == Sensor.TYPE_ACCELEROMETER || s.type == Sensor.TYPE_GYROSCOPE) 
@@ -411,6 +410,7 @@ class TrackingService : Service(), SensorEventListener {{
             Sensor.TYPE_STEP_COUNTER -> {{ lastStep = event.values[0].toInt() }}
         }}
         
+        // Лимитируем обновление уведомления до 1 раза в секунду
         if (now - lastNotificationMs >= 1000L) {{
             lastNotificationMs = now
             val elapsed = ((now - startTs) / 1000L).toInt()
@@ -516,6 +516,7 @@ import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.abs
 import kotlin.math.hypot
 
 class MainActivity : ComponentActivity() {{
@@ -640,6 +641,26 @@ class MainActivity : ComponentActivity() {{
                 performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                 if (screen == 3) clearAll()
             }}
+
+            // Настоящие свайпы: экраны листаются плавным смахиванием!
+            override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {{
+                if (e1 == null) return false
+                val dx = e2.x - e1.x
+                val dy = e2.y - e1.y
+                if (abs(dx) > 60f && abs(dx) > abs(dy) * 1.5f && abs(velocityX) > 150f) {{
+                    if (dx > 0 && screen > 0) {{ 
+                        screen--
+                        invalidate()
+                        performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) 
+                    }} else if (dx < 0 && screen < screens.size - 1) {{ 
+                        screen++
+                        invalidate()
+                        performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) 
+                    }}
+                    return true
+                }}
+                return false
+            }}
         }})
 
         override fun onTouchEvent(event: MotionEvent): Boolean {{
@@ -654,6 +675,8 @@ class MainActivity : ComponentActivity() {{
 
         private fun handleTap(x: Float, y: Float) {{
             val w = width.toFloat()
+            val h = height.toFloat()
+            
             if (x < w * 0.30f) {{
                 if (screen > 0) {{ screen--; invalidate(); performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) }}
             }} else if (x > w * 0.70f) {{
@@ -661,20 +684,22 @@ class MainActivity : ComponentActivity() {{
             }} else {{
                 if (screen == 0) {{
                     val cx = w / 2f
-                    val cy = height / 2f - 20f
+                    val cy = h / 2f - 20f
                     val r = w * 0.27f
                     if (hypot(x - cx, y - cy) <= r * 1.3f) {{
                         performHapticFeedback(HapticFeedbackConstants.CONFIRM)
                         toggleTracking()
                     }}
                 }} else if (screen == 3) {{
-                    if (y > height / 2f + 30f && y < height / 2f + 80f) {{
+                    val cy = h / 2f
+                    // Чёткие зоны для двух кнопок в настройках
+                    if (y > cy + 20f && y < cy + 90f) {{
                         try {{
                             val intent = Intent("androidx.health.ACTION_REQUEST_PERMISSIONS")
                             intent.putExtra("androidx.health.health_permissions", arrayOf("android.permission.health.READ_SLEEP"))
                             context.startActivity(intent)
                         }} catch (e: Exception) {{ showToast("Health Connect недоступен") }}
-                    }} else {{
+                    }} else if (y > cy - 50f && y < cy + 10f) {{
                         cancelLast()
                     }}
                 }}
