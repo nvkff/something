@@ -79,6 +79,8 @@ dependencies {{
     implementation("androidx.wear:wear:1.3.0")
     implementation("androidx.activity:activity-ktx:1.9.0")
     implementation("androidx.core:core-ktx:1.12.0")
+    implementation("androidx.health.connect:connect-client:1.1.0-alpha07")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
 }}
 ''')
 
@@ -107,6 +109,7 @@ with open("app/src/main/AndroidManifest.xml", "w", encoding="utf-8") as f:
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_HEALTH" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.health.READ_SLEEP" />
     
     <application
         android:allowBackup="false"
@@ -124,6 +127,9 @@ with open("app/src/main/AndroidManifest.xml", "w", encoding="utf-8") as f:
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
             </intent-filter>
         </activity>
         
@@ -247,16 +253,17 @@ class TrackingService : Service(), SensorEventListener {{
         
         sensorAggs.clear()
         registeredSensors.clear()
-        val wanted = setOf(
-            Sensor.TYPE_HEART_RATE, Sensor.TYPE_ACCELEROMETER, 
-            Sensor.TYPE_LIGHT, Sensor.TYPE_STEP_COUNTER,
-            Sensor.TYPE_GYROSCOPE, Sensor.TYPE_GRAVITY
-        )
+        
+        // Подключаем вообще все доступные датчики (Skin Temp, SpO2, и т.д.)
         val seen = mutableSetOf<Int>()
         for (s in sm.getSensorList(Sensor.TYPE_ALL)) {{
-            if (s.type !in wanted || s.type in seen) continue
+            if (s.type in seen) continue
+            // Фильтруем только датчики-триггеры, которые не пишут непрерывно
+            if (s.type == Sensor.TYPE_SIGNIFICANT_MOTION || s.type == Sensor.TYPE_STEP_DETECTOR) continue
+            
             val delay = if (s.type == Sensor.TYPE_ACCELEROMETER || s.type == Sensor.TYPE_GYROSCOPE) 
                 SensorManager.SENSOR_DELAY_GAME else SensorManager.SENSOR_DELAY_NORMAL
+            
             if (sm.registerListener(this, s, delay)) {{
                 sensorAggs[s.name] = SensorAgg(s.name)
                 registeredSensors.add(s)
@@ -265,6 +272,29 @@ class TrackingService : Service(), SensorEventListener {{
         }}
         
         startForeground(1, buildNotification(0))
+    }}
+
+    private fun getSleepData(): String {{
+        var sleepContext = ""
+        try {{
+            if (androidx.health.connect.client.HealthConnectClient.getSdkStatus(this) == androidx.health.connect.client.HealthConnectClient.SDK_AVAILABLE) {{
+                val hc = androidx.health.connect.client.HealthConnectClient.getOrCreate(this)
+                kotlinx.coroutines.runBlocking {{
+                    val now = java.time.Instant.now()
+                    val req = androidx.health.connect.client.request.ReadRecordsRequest(
+                        recordType = androidx.health.connect.client.records.SleepSessionRecord::class,
+                        timeRangeFilter = androidx.health.connect.client.time.TimeRangeFilter.between(now.minus(java.time.Duration.ofDays(2)), now)
+                    )
+                    val res = hc.readRecords(req)
+                    val rec = res.records.maxByOrNull {{ it.endTime }}
+                    if (rec != null) {{
+                        val h = (rec.endTime.toEpochMilli() - rec.startTime.toEpochMilli()) / 3600000.0
+                        sleepContext = String.format(java.util.Locale.US, "%.1fh", h)
+                    }}
+                }}
+            }}
+        }} catch(e: Exception) {{}}
+        return sleepContext
     }}
 
     private fun stopTracking() {{
@@ -282,6 +312,8 @@ class TrackingService : Service(), SensorEventListener {{
         val endTs = System.currentTimeMillis()
         val durMs = endTs - startTs
         if (durMs < 3000L) return
+        
+        val sleepContext = getSleepData()
         
         val stepDelta = if (stepStart >= 0 && lastStep >= 0) (lastStep - stepStart).coerceAtLeast(0) else 0
         val truncated = durMs >= 2L * 60L * 60L * 1000L
@@ -304,6 +336,7 @@ class TrackingService : Service(), SensorEventListener {{
             put("stepDelta", stepDelta)
             put("truncated", truncated)
             put("note", "")
+            put("sleepContext", sleepContext)
             put("extraSensors", extrasObj.toString())
         }}
         
@@ -509,10 +542,8 @@ class MainActivity : ComponentActivity() {{
 
     override fun onCreate(savedInstanceState: Bundle?) {{
         super.onCreate(savedInstanceState)
-        
         ambientObserver = AmbientLifecycleObserver(this, ContextCompat.getMainExecutor(this), ambientCallback)
         lifecycle.addObserver(ambientObserver)
-        
         requestPermissionsAndInit()
     }}
 
@@ -532,7 +563,6 @@ class MainActivity : ComponentActivity() {{
         }}
     }}
     
-    // ИСПРАВЛЕНА ОШИБКА: Array<String> вместо Array<out String>
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {{
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         setupUI()
@@ -638,7 +668,15 @@ class MainActivity : ComponentActivity() {{
                         toggleTracking()
                     }}
                 }} else if (screen == 3) {{
-                    cancelLast()
+                    if (y > height / 2f + 30f && y < height / 2f + 80f) {{
+                        try {{
+                            val intent = Intent("androidx.health.ACTION_REQUEST_PERMISSIONS")
+                            intent.putExtra("androidx.health.health_permissions", arrayOf("android.permission.health.READ_SLEEP"))
+                            context.startActivity(intent)
+                        }} catch (e: Exception) {{ showToast("Health Connect недоступен") }}
+                    }} else {{
+                        cancelLast()
+                    }}
                 }}
             }}
         }}
@@ -754,8 +792,10 @@ class MainActivity : ComponentActivity() {{
         private fun drawSettings(c: Canvas) {{
             drawTxt(c, "Настройки", width / 2f, 100f, 26f, 0xFFA89CD0.toInt())
             drawTxt(c, "Записей: ${{sessions.size}}", width / 2f, 160f, 22f)
-            drawTxt(c, "Тап по центру = отменить", width / 2f, 220f, 20f, 0xFFFF8888.toInt())
-            drawTxt(c, "Долгий тап = очистить", width / 2f, 250f, 20f, 0xFFFF8888.toInt())
+            drawTxt(c, "Тап по центру = отменить", width / 2f, 210f, 20f, 0xFFFF8888.toInt())
+            drawTxt(c, "Долгий тап = очистить", width / 2f, 240f, 20f, 0xFFFF8888.toInt())
+            
+            drawTxt(c, "Доступ ко сну (Health Connect)", width / 2f, 280f, 18f, 0xFF888888.toInt())
             
             val syncStatus = if ("{WORKER_URL}".isNotEmpty() && "{WORKER_URL}" != "WORKER_URL_PLACEHOLDER") "Синк: ВКЛ" else "Синк: ЛОК"
             drawTxt(c, syncStatus, width / 2f, 320f, 18f, 0xFF888888.toInt())
