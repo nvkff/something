@@ -196,10 +196,10 @@ class TrackingService : Service(), SensorEventListener {{
     private var isRecording = false
     private var startTs = 0L
     private var lastHrSavedMs = 0L
+    private var lastNotificationMs = 0L
     private var hrSum = 0L; var hrN = 0; var hrMin = Int.MAX_VALUE; var hrMax = 0
     private val hrSamples = StringBuilder()
     private var motionSumSq = 0.0; var motionN = 0; var motionMax = 0.0
-    private var currentMotion = 0.0
     private var lightSum = 0.0; var lightN = 0
     private var stepStart = -1; var lastStep = -1
     
@@ -210,6 +210,7 @@ class TrackingService : Service(), SensorEventListener {{
         const val CHANNEL_ID = "430_tracking_channel"
         const val ACTION_START = "ACTION_START"
         const val ACTION_STOP = "ACTION_STOP"
+        var currentStartTs = 0L // Чтобы интерфейс брал время напрямую отсюда
     }}
 
     override fun onCreate() {{
@@ -235,10 +236,13 @@ class TrackingService : Service(), SensorEventListener {{
         
         isRecording = true
         startTs = System.currentTimeMillis()
+        currentStartTs = startTs
+        lastNotificationMs = startTs
+        
         lastHrSavedMs = 0L
         hrSum = 0; hrN = 0; hrMin = Int.MAX_VALUE; hrMax = 0
         hrSamples.setLength(0)
-        motionSumSq = 0.0; motionN = 0; motionMax = 0.0; currentMotion = 0.0
+        motionSumSq = 0.0; motionN = 0; motionMax = 0.0
         lightSum = 0.0; lightN = 0
         stepStart = lastStep
         
@@ -267,6 +271,7 @@ class TrackingService : Service(), SensorEventListener {{
     private fun stopTracking() {{
         if (!isRecording) return
         isRecording = false
+        currentStartTs = 0L
         sm.unregisterListener(this)
         
         try {{ wakeLock?.takeIf {{ it.isHeld }}?.release() }} catch (_: Exception) {{}}
@@ -336,7 +341,8 @@ class TrackingService : Service(), SensorEventListener {{
                 conn.readTimeout = 7000
                 conn.setRequestProperty("Content-Type", "application/json")
                 if (pass.isNotEmpty()) {{
-                    conn.setRequestProperty("X-Auth", pass)
+                    val creds = Base64.encodeToString(pass.toByteArray(), Base64.NO_WRAP)
+                    conn.setRequestProperty("X-Auth", creds)
                 }}
                 conn.outputStream.use {{ it.write(json.toByteArray()) }}
                 conn.responseCode
@@ -368,17 +374,20 @@ class TrackingService : Service(), SensorEventListener {{
                 val delta = abs(mag - 9.80665)
                 motionSumSq += delta * delta; motionN++
                 if (delta > motionMax) motionMax = delta
-                currentMotion = delta
             }}
             Sensor.TYPE_LIGHT -> {{ lightSum += event.values[0]; lightN++ }}
             Sensor.TYPE_STEP_COUNTER -> {{ lastStep = event.values[0].toInt() }}
         }}
         
-        val elapsed = ((now - startTs) / 1000L).toInt()
-        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        nm.notify(1, buildNotification(elapsed))
-        
-        if (elapsed * 1000L >= 2L * 60L * 60L * 1000L) stopTracking()
+        // Лимитируем обновление уведомления до 1 раза в секунду, чтобы не повесить часы!
+        if (now - lastNotificationMs >= 1000L) {{
+            lastNotificationMs = now
+            val elapsed = ((now - startTs) / 1000L).toInt()
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            nm.notify(1, buildNotification(elapsed))
+            
+            if (elapsed * 1000L >= 2L * 60L * 60L * 1000L) stopTracking()
+        }}
     }}
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {{}}
@@ -473,7 +482,6 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.abs
-import kotlin.math.hypot
 
 class MainActivity : ComponentActivity() {{
     private lateinit var mainView: MainView
@@ -608,7 +616,17 @@ class MainActivity : ComponentActivity() {{
             c.drawCircle(cx, cy, r, bp); c.drawCircle(cx, cy, r, rp)
             
             if (running) {{
-                drawTxt(c, "СТОП", cx, cy + 12f, 32f, 0xFFFF5577.toInt())
+                val startTs = TrackingService.currentStartTs
+                if (startTs > 0L) {{
+                    val elapsed = (System.currentTimeMillis() - startTs) / 1000L
+                    val m = elapsed / 60
+                    val s = elapsed % 60
+                    val timeStr = String.format(Locale.US, "%02d:%02d", m, s)
+                    drawTxt(c, timeStr, cx, cy + 5f, 36f, Color.WHITE)
+                    drawTxt(c, "СТОП", cx, cy + r + 40f, 20f, 0xFFFF5577.toInt())
+                }} else {{
+                    drawTxt(c, "СТОП", cx, cy + 12f, 32f, 0xFFFF5577.toInt())
+                }}
             }} else {{
                 val pp = Paint().apply {{ color = Color.WHITE; strokeWidth = 9f; strokeCap = Paint.Cap.ROUND; isAntiAlias = true }}
                 val p = r * 0.35f
@@ -618,9 +636,8 @@ class MainActivity : ComponentActivity() {{
                 path.lineTo(cx + p, cy)
                 path.close()
                 c.drawPath(path, pp)
+                drawTxt(c, "Нажми для старта", cx, cy + r + 50f, 20f, 0xFF888888.toInt())
             }}
-            
-            drawTxt(c, if (running) "Идёт запись" else "Нажми для старта", cx, cy + r + 50f, 22f, 0xFF888888.toInt())
             
             if (sessions.size >= 1) {{
                 val fmt = SimpleDateFormat("dd.MM HH:mm", Locale.getDefault())
@@ -693,25 +710,24 @@ class MainActivity : ComponentActivity() {{
 
         private fun handleTap(x: Float, y: Float) {{
             val w = width.toFloat()
-            // Зоны навигации по краям (30% слева, 30% справа)
+            // Жесткое разделение зон: 30% слева, 30% справа
             if (x < w * 0.30f) {{
                 if (screen > 0) {{ screen--; invalidate() }}
             }} else if (x > w * 0.70f) {{
                 if (screen < screens.size - 1) {{ screen++; invalidate() }}
             }} else {{
-                // Центральная зона (нажатие на кнопки)
+                // Центральная зона (только для кнопок)
                 when (screen) {{
                     0 -> {{
                         val cx = w / 2f
                         val cy = height / 2f - 20f
                         val r = w * 0.27f
-                        // Запускаем трекинг только если тапнули точно по круглой кнопке в центре
+                        // Реагируем ТОЛЬКО если тапнули по центральному кругу (с запасом 1.5)
                         if (kotlin.math.hypot(x - cx, y - cy) <= r * 1.5f) {{
                             toggleTracking()
                         }}
                     }}
                     3 -> {{
-                        // Удаление последней на странице настроек
                         cancelLast()
                     }}
                 }}
@@ -736,12 +752,12 @@ class MainActivity : ComponentActivity() {{
                     val absDy = abs(dy)
                     
                     if (!longFired) {{
-                        // Если это был быстрый и длинный жест по горизонтали -> обрабатываем как свайп
+                        // Обработка настоящего свайпа (быстрое и длинное движение вбок)
                         if (dt < 500 && absDx > 70f && absDx > absDy * 1.5f) {{
                             if (dx > 0 && screen > 0) {{ screen--; invalidate() }}
                             else if (dx < 0 && screen < screens.size - 1) {{ screen++; invalidate() }}
                         }} 
-                        // Если жест короткий и не сдвинулся далеко -> это тап
+                        // Если жест короткий и палец почти не сдвинулся -> это тап
                         else if (dt < 400 && absDx < 40f && absDy < 40f) {{
                             handleTap(e.x, e.y)
                         }}
